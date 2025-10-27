@@ -13,8 +13,6 @@ assets.zip
 .venv
 .env
 
-/checkpoints/*
-
 # Videos, zip files, or csv
 *.mp4
 *.zip
