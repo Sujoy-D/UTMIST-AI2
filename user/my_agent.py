@@ -1,3 +1,4 @@
+
 # # SUBMISSION: Agent
 # This will be the Agent class we run in the 1v1. We've started you off with a functioning RL agent (`SB3Agent(Agent)`) and if-statement agent (`BasedAgent(Agent)`). Feel free to copy either to `SubmittedAgent(Agent)` then begin modifying.
 # 
@@ -25,110 +26,32 @@ from sb3_contrib import RecurrentPPO # Importing an LSTM
 # import ttnn
 # from user.my_agent_tt import TTMLPPolicy
 
-
 class SubmittedAgent(Agent):
-    '''
-    Input the **file_path** to your agent here for submission!
-    '''
+    def __init__(
+        self,
+        file_path: Optional[str] = None,
+    ):
+        super().__init__(file_path)
+        # Remove all the hardcoded logic - the neural network will learn this
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.time = 0
-        self.weapon_ranges = {"Hammer": 2.0, "Spear": 3.0, "Punch": 1.0}
-        self.stage_width = 10.67
-
-    def predict(self, obs):
-        self.time += 1
-
-        # Extract observation data
-        pos = self.obs_helper.get_section(obs, 'player_pos')
-        opp_pos = self.obs_helper.get_section(obs, 'opponent_pos')
-        player_state = self.obs_helper.get_section(obs, 'player_state')
-        opp_state = self.obs_helper.get_section(obs, 'opponent_state')
-        player_weapon = self.obs_helper.get_section(obs, 'player_weapon')
-
-        # Calculate key distances
-        distance_to_opponent = abs(pos[0] - opp_pos[0])
-        stage_edge = self.stage_width / 2
-        distance_from_edge = stage_edge - abs(pos[0])
-
-        action = self.act_helper.zeros()
-        optimal_range = self.weapon_ranges.get(player_weapon, 2.0)
-        danger_zone = 1.5
-
-        # === PRIORITY 1: STAGE SAFETY (Don't fall off!) ===
-        if distance_from_edge < 1.0:  # Too close to edge - EMERGENCY!
-            if pos[0] > 0:  # On right edge
-                action = self.act_helper.press_keys(['a'])  # Move left toward center
-            else:  # On left edge
-                action = self.act_helper.press_keys(['d'])  # Move right toward center
-
-            # Defensive jump when near edge
-            if self.time % 2 == 0:
-                action = self.act_helper.press_keys(['space'], action)
-            return action  # Return immediately - stage safety is top priority
-
-        # === PRIORITY 2: HEIGHT SAFETY (Don't fall from height) ===
-        if pos[1] < -2.0:  # Getting too low
-            # Try to jump to recover
-            if self.time % 3 == 0:
-                action = self.act_helper.press_keys(['space'], action)
-            return action
-
-        # === PRIORITY 3: EVASION & COMBAT STRATEGY ===
-
-        # Situation 1: Opponent too close - EVADE!
-        if distance_to_opponent < danger_zone:
-            # Smart evasion that considers stage edges
-            if opp_pos[0] > pos[0]:  # Opponent on right
-                # Move left if safe, otherwise move right
-                if pos[0] > -stage_edge + 1.5:
-                    action = self.act_helper.press_keys(['a'])
-                else:
-                    action = self.act_helper.press_keys(['d'])
-            else:  # Opponent on left
-                # Move right if safe, otherwise move left
-                if pos[0] < stage_edge - 1.5:
-                    action = self.act_helper.press_keys(['d'])
-                else:
-                    action = self.act_helper.press_keys(['a'])
-
-            # Evasive jump
-            if self.time % 3 == 0:
-                action = self.act_helper.press_keys(['space'], action)
-
-        # Situation 2: In optimal combat range
-        elif distance_to_opponent < optimal_range:
-            # Opponent is vulnerable - ATTACK!
-            if opp_state in [5, 11]:  # KO'd or stunned
-                action = self.act_helper.press_keys(['j'])
-            else:
-                # Maintain optimal distance while drifting toward center
-                if pos[0] > 0:  # On right side - drift left toward center
-                    action = self.act_helper.press_keys(['a'])
-                else:  # On left side - drift right toward center
-                    action = self.act_helper.press_keys(['d'])
-
-        # Situation 3: Too far - close distance cautiously
-        else:
-            if opp_pos[0] > pos[0]:  # Opponent on right
-                if pos[0] < stage_edge - 1.0:  # Check right edge safety
-                    action = self.act_helper.press_keys(['d'])
-            else:  # Opponent on left
-                if pos[0] > -stage_edge + 1.0:  # Check left edge safety
-                    action = self.act_helper.press_keys(['a'])
-
-        # === DEFENSIVE REACTION: Jump when opponent attacks near you ===
-        if (opp_state == AttackState and distance_to_opponent < 2.5 and
-                distance_from_edge < 2.0 and self.time % 2 == 0):
-            action = self.act_helper.press_keys(['space'], action)
-
-        return action
-
-    # Keep the existing methods from the original SubmittedAgent
     def _initialize(self) -> None:
         if self.file_path is None:
-            self.model = PPO("MlpPolicy", self.env, verbose=0)
+            # Train from scratch with defensive-focused settings
+            self.model = PPO(
+                "MlpPolicy",
+                self.env,
+                verbose=0,
+                n_steps=4096,           # More steps for better learning
+                batch_size=128,
+                gamma=0.99,             # Long-term thinking
+                learning_rate=0.0003,
+                ent_coef=0.01,          # Encourages exploration
+                clip_range=0.2,
+                n_epochs=10,
+                policy_kwargs=dict(
+                    net_arch=[256, 256]  # Larger network for complex strategies
+                )
+            )
             del self.env
         else:
             self.model = PPO.load(self.file_path)
@@ -141,9 +64,19 @@ class SubmittedAgent(Agent):
             gdown.download(url, output=data_path, fuzzy=True)
         return data_path
 
+    def predict(self, obs):
+        # Let the trained neural network make the decision
+        # No hardcoded rules - the AI learns everything!
+        action, _ = self.model.predict(obs)
+        return action
+
     def save(self, file_path: str) -> None:
         self.model.save(file_path)
 
-    def learn(self, env, total_timesteps, log_interval: int = 4):
+    def learn(self, env, total_timesteps, log_interval: int = 4, verbose=0):
         self.model.set_env(env)
-        self.model.learn(total_timesteps=total_timesteps, log_interval=log_interval)
+        self.model.verbose = verbose
+        self.model.learn(
+            total_timesteps=total_timesteps,
+            log_interval=log_interval,
+        )

@@ -695,7 +695,7 @@ The main function runs training. You can change configurations such as the Agent
 if __name__ == '__main__':
     # Create agent
     from user.my_agent import SubmittedAgent
-    my_agent = SubmittedAgent()
+    my_agent = SB3Agent(sb3_class=PPO)
     # my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
 
     # Start here if you want to train from scratch. e.g:
@@ -737,5 +737,5 @@ if __name__ == '__main__':
         opponent_cfg,
         CameraResolution.LOW,
         train_timesteps=100_000,
-        train_logging=TrainLogging.PLOT
+        train_logging=TrainLogging.NONE
     )
