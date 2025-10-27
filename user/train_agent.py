@@ -345,6 +345,127 @@ Example Reward Functions:
 - Find more [here](https://colab.research.google.com/drive/1qMs336DclBwdn6JBASa5ioDIfvenW8Ha?usp=sharing#scrollTo=-XAOXXMPTiHJ).
 '''
 
+'''
+New Implementations
+'''
+
+
+def distance_management_reward(
+        env: WarehouseBrawl,
+        safe_distance: float = 3.0,
+        danger_distance: float = 1.5
+) -> float:
+    """
+    Rewards maintaining safe distance, punishes being too close or too far
+    """
+    player: Player = env.objects["player"]
+    opponent: Player = env.objects["opponent"]
+
+    distance = abs(player.body.position.x - opponent.body.position.x)
+
+    # Reward for being in optimal engagement range
+    if danger_distance < distance < safe_distance:
+        return 0.1 * env.dt
+    # Punish for being too close (danger zone)
+    elif distance <= danger_distance:
+        return -0.3 * env.dt
+    # Small punish for being too far (running away)
+    else:
+        return -0.05 * env.dt
+
+
+def strategic_engagement_reward(
+        env: WarehouseBrawl,
+        weapon_engagement_ranges: dict = {"Hammer": 2.0, "Spear": 3.0, "Punch": 1.0}
+) -> float:
+    """
+    Rewards engaging when you have weapon advantage and are at optimal range
+    """
+    player: Player = env.objects["player"]
+    opponent: Player = env.objects["opponent"]
+
+    distance = abs(player.body.position.x - opponent.body.position.x)
+    player_weapon = player.weapon
+    optimal_range = weapon_engagement_ranges.get(player_weapon, 2.0)
+
+    # Reward for being at optimal range for your weapon
+    range_diff = abs(distance - optimal_range)
+    if range_diff < 0.5:  # Within 0.5 units of optimal range
+        return 0.2 * env.dt
+
+    return 0.0
+
+
+def stage_boundary_penalty(
+        env: WarehouseBrawl,
+        boundary_margin: float = 1.0
+) -> float:
+    """
+    Heavy penalty for being near stage edges where falling off is likely
+    """
+    player: Player = env.objects["player"]
+    stage_width = 10.67  # From BasedAgent code
+
+    # Distance from center (0,0 is center of stage)
+    distance_from_center = abs(player.body.position.x)
+    stage_edge = stage_width / 2
+
+    # How close to the edge (0 = at center, 1 = at edge)
+    edge_proximity = distance_from_center / stage_edge
+
+    # Penalty increases exponentially near edges
+    if edge_proximity > 0.8:  # Last 20% of stage
+        penalty = -2.0 * (edge_proximity - 0.8) / 0.2  # -2.0 when at edge
+        return penalty * env.dt
+
+    return 0.0
+
+
+def falling_off_prevention_reward(
+        env: WarehouseBrawl,
+        safe_height: float = -3.0
+) -> float:
+    """
+    Rewards moving away from dangerous low positions where falling off is imminent
+    """
+    player: Player = env.objects["player"]
+
+    # Heavy penalty for being too low (about to fall off)
+    if player.body.position.y < safe_height:
+        return -5.0 * env.dt  # Very heavy penalty
+
+    # Moderate penalty for getting low
+    elif player.body.position.y < -2.0:
+        return -1.0 * env.dt
+
+    return 0.0
+
+
+def center_stage_preference_reward(
+        env: WarehouseBrawl
+) -> float:
+    """
+    Small continuous reward for staying near center stage (safest position)
+    """
+    player: Player = env.objects["player"]
+
+    # Distance from center (0 is center)
+    distance_from_center = abs(player.body.position.x)
+    stage_width = 10.67
+    max_distance = stage_width / 2
+
+    # Normalize to 0-1 where 0=center, 1=edge
+    normalized_distance = distance_from_center / max_distance
+
+    # Reward for being closer to center (1.0 at center, 0 at edges)
+    center_preference = 1.0 - normalized_distance
+
+    return 0.1 * center_preference * env.dt  # Small continuous reward
+
+'''
+Given
+'''
+
 def base_height_l2(
     env: WarehouseBrawl,
     target_height: float,
@@ -543,14 +664,18 @@ Add your dictionary of RewardFunctions here using RewTerms
 '''
 def gen_reward_manager():
     reward_functions = {
-        #'target_height_reward': RewTerm(func=base_height_l2, weight=0.0, params={'target_height': -4, 'obj_name': 'player'}),
+        # === STAGE SAFETY REWARDS (HIGH PRIORITY) ===
+        'stage_boundary_penalty': RewTerm(func=stage_boundary_penalty, weight=2.0),
+        'falling_off_prevention_reward': RewTerm(func=falling_off_prevention_reward, weight=3.0),
+        'center_stage_preference_reward': RewTerm(func=center_stage_preference_reward, weight=0.5),
+
+        # === COMBAT & EVASION REWARDS ===
+        'distance_management_reward': RewTerm(func=distance_management_reward, weight=1.0),
+        'strategic_engagement_reward': RewTerm(func=strategic_engagement_reward, weight=0.8),
         'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=0.5),
         'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=1.0),
-        #'head_to_middle_reward': RewTerm(func=head_to_middle_reward, weight=0.01),
-        #'head_to_opponent': RewTerm(func=head_to_opponent, weight=0.05),
         'penalize_attack_reward': RewTerm(func=in_state_reward, weight=-0.04, params={'desired_state': AttackState}),
         'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=-0.01),
-        #'taunt_reward': RewTerm(func=in_state_reward, weight=0.2, params={'desired_state': TauntState}),
     }
     signal_subscriptions = {
         'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=50)),
@@ -569,7 +694,9 @@ The main function runs training. You can change configurations such as the Agent
 '''
 if __name__ == '__main__':
     # Create agent
-    my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
+    from user.my_agent import SubmittedAgent
+    my_agent = SubmittedAgent()
+    # my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
 
     # Start here if you want to train from scratch. e.g:
     #my_agent = RecurrentPPOAgent()
@@ -588,18 +715,19 @@ if __name__ == '__main__':
     # Set save settings here:
     save_handler = SaveHandler(
         agent=my_agent, # Agent to save
-        save_freq=100_000, # Save frequency
+        save_freq=25_000, # Save frequency
         max_saved=40, # Maximum number of saved models
         save_path='checkpoints', # Save path
-        run_name='experiment_9',
+        run_name='defensive_agent_v2',
         mode=SaveHandlerMode.FORCE # Save mode, FORCE or RESUME
     )
 
     # Set opponent settings here:
     opponent_specification = {
-                    'self_play': (8, selfplay_handler),
-                    'constant_agent': (0.5, partial(ConstantAgent)),
-                    'based_agent': (1.5, partial(BasedAgent)),
+        'self_play': (6, selfplay_handler),
+        'constant_agent': (1, partial(ConstantAgent)),
+        'based_agent': (2, partial(BasedAgent)),  # Aggressive opponent
+        'random_agent': (1, partial(RandomAgent)),
                 }
     opponent_cfg = OpponentsCfg(opponents=opponent_specification)
 
@@ -608,6 +736,6 @@ if __name__ == '__main__':
         save_handler,
         opponent_cfg,
         CameraResolution.LOW,
-        train_timesteps=1_000_000_000,
+        train_timesteps=100_000,
         train_logging=TrainLogging.PLOT
     )
