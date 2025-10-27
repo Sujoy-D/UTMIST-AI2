@@ -433,6 +433,30 @@ def danger_zone_reward(
 
     return reward * env.dt
 
+def danger_danger_zone_reward(
+    env: WarehouseBrawl,
+    zone_penalty: int = 1,
+    zone_height: float = 4.97
+) -> float:
+    """
+    Applies a penalty for every time frame player surpases a certain height threshold in the environment.
+
+    Args:
+        env (WarehouseBrawl): The game environment.
+        zone_penalty (int): The penalty applied when the player is in the danger zone.
+        zone_height (float): The height threshold defining the danger zone.
+
+    Returns:
+        float: The computed penalty as a tensor.
+    """
+    # Get player object from the environment
+    player: Player = env.objects["player"]
+
+    # Apply penalty if the player is in the danger zone
+    reward = -zone_penalty if player.body.position.y >= zone_height else 0.0
+
+    return reward * env.dt
+
 def in_state_reward(
     env: WarehouseBrawl,
     desired_state: Type[PlayerObjectState]=BackDashState,
@@ -484,27 +508,30 @@ def stay_on_platform_reward(env: WarehouseBrawl) -> float:
     platformX = env.objects['platform1'].body.position[0]
 
     if player.body.position.x < -7.0:
-        return -0.2
+        return -1.0
     elif -7.0 <= player.body.position.x <= -6.2:
-        return -0.2 * (1 - (player.body.position.x + 7.0 / 0.8))
+        return -1.0 * (1 - (player.body.position.x + 7.0 / 0.8))
     elif -2.8 <= player.body.position.x <= -2.0:
-        return -0.2 * (1 - (- player.body.position.x - 2.0 / 0.8))
+        return -1.0 * (1 - (- player.body.position.x - 2.0 / 0.8))
     elif -2.0 < player.body.position.x < platformX - 1:
-        return -0.2
+        return -1.0
     elif platformX - 1 <= player.body.position.x <= platformX - 0.6:
-        return -0.2 * (1 - (player.body.position.x - platformX + 1 / 0.6))
+        return -1.0 * (1 - (player.body.position.x - platformX + 1 / 0.6))
     elif platformX + 0.4 <= player.body.position.x <= platformX + 1:
-        return -0.2 * (1 - (- player.body.position.x + platformX + 1 / 0.6))
+        return -1.0 * (1 - (- player.body.position.x + platformX + 1 / 0.6))
     elif platformX + 1 < player.body.position.x < 2.0:
-        return -0.2
+        return -1.0
     elif 2.0 <= player.body.position.x <= 2.8:
-        return -0.2 * (1 - (player.body.position.x - 2.0 / 0.8))
+        return -1.0 * (1 - (player.body.position.x - 2.0 / 0.8))
     elif 6.2 <= player.body.position.x <= 7.0:
-        return -0.2 * (1 - (- player.body.position.x + 7.0 / 0.8))
+        return -1.0 * (1 - (- player.body.position.x + 7.0 / 0.8))
     elif player.body.position.x > 7.0:
-        return -0.2
+        return -1.0
     else:
         return 0.0
+    
+def survival_time_reward(env: WarehouseBrawl) -> float:
+    return 1.0 * env.dt
 
 def head_to_opponent(
     env: WarehouseBrawl,
@@ -571,8 +598,10 @@ Add your dictionary of RewardFunctions here using RewTerms
 def gen_reward_manager():
     reward_functions = {
         #'target_height_reward': RewTerm(func=base_height_l2, weight=0.0, params={'target_height': -4, 'obj_name': 'player'}),
-        'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=4),
-        'stay_on_platform': RewTerm(func=stay_on_platform_reward, weight=2),
+        'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=8),
+        'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=16),
+        'stay_on_platform': RewTerm(func=stay_on_platform_reward, weight=4),
+        'survival_time': RewTerm(func=survival_time_reward, weight=4),
         #'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=1.0),
         #'head_to_middle_reward': RewTerm(func=head_to_middle_reward, weight=0.01),
         #'head_to_opponent': RewTerm(func=head_to_opponent, weight=0.05),
@@ -582,10 +611,10 @@ def gen_reward_manager():
     }
     signal_subscriptions = {
         'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=50)),
-        'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=8)),
+        'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=16)),
         #'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=5)),
         #'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=10)),
-        #'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=15))
+        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=2))
     }
     return RewardManager(reward_functions, signal_subscriptions)
 
@@ -600,10 +629,11 @@ if __name__ == '__main__':
     my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
 
     # Start here if you want to train from scratch. e.g:
-    #my_agent = RecurrentPPOAgent()
+    # my_agent = RecurrentPPOAgent()
 
     # Start here if you want to train from a specific timestep. e.g:
-    #my_agent = RecurrentPPOAgent(file_path='checkpoints/experiment_3/rl_model_120006_steps.zip')
+    # my_agent = RecurrentPPOAgent(file_path='checkpoints/experiment_9/rl_model_20000004_steps.zip')
+    my_agent = SB3Agent(sb3_class=PPO, file_path='checkpoints/experiment_9/rl_model_24000007_steps.zip')
 
     # Reward manager
     reward_manager = gen_reward_manager()
@@ -616,11 +646,11 @@ if __name__ == '__main__':
     # Set save settings here:
     save_handler = SaveHandler(
         agent=my_agent, # Agent to save
-        save_freq=5_000_000, # Save frequency
+        save_freq=1_000_000, # Save frequency
         max_saved=40, # Maximum number of saved models
         save_path='checkpoints', # Save path
         run_name='experiment_9',
-        mode=SaveHandlerMode.FORCE # Save mode, FORCE or RESUME
+        mode=SaveHandlerMode.RESUME # Save mode, FORCE or RESUME
     )
 
     # Set opponent settings here:
