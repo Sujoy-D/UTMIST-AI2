@@ -5,17 +5,18 @@ from user.my_agent import SubmittedAgent
 import pygame
 pygame.init()
 
-my_agent = UserInputAgent()
+my_agent1 = UserInputAgent()
+my_agent2 = UserInputAgent()
 
 #Input your file path here in SubmittedAgent if you are loading a model:
 opponent = SubmittedAgent(file_path=None)
 
-match_time = 99999
+match_time = 999999
 
 # Run a single real-time match
 run_real_time_match(
-    agent_1=my_agent,
-    agent_2=opponent,
+    agent_1=my_agent1,
+    agent_2=my_agent2,
     max_timesteps=30 * 999990000,  # Match time in frames (adjust as needed)
     resolution=CameraResolution.LOW,
 )
