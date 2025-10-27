@@ -74,6 +74,7 @@ class SB3Agent(Agent):
         self.model.learn(
             total_timesteps=total_timesteps,
             log_interval=log_interval,
+            reset_num_timesteps=False,
         )
 
 class RecurrentPPOAgent(Agent):
