@@ -600,14 +600,14 @@ def gen_reward_manager():
     reward_functions = {
         #'target_height_reward': RewTerm(func=base_height_l2, weight=0.0, params={'target_height': -4, 'obj_name': 'player'}),
         'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=8),
-        'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=16),
-        'stay_on_platform': RewTerm(func=stay_on_platform_reward, weight=4),
-        'survival_time': RewTerm(func=survival_time_reward, weight=4),
+        'danger_danger_zone_reward': RewTerm(func=danger_danger_zone_reward, weight=16),
+        'stay_on_platform': RewTerm(func=stay_on_platform_reward, weight=2),
+        'survival_time': RewTerm(func=survival_time_reward, weight=0.1),
         #'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=1.0),
         #'head_to_middle_reward': RewTerm(func=head_to_middle_reward, weight=0.01),
         #'head_to_opponent': RewTerm(func=head_to_opponent, weight=0.05),
         #'penalize_attack_reward': RewTerm(func=in_state_reward, weight=-0.04, params={'desired_state': AttackState}),
-        #'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=-0.01),
+        'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=-0.4),
         #'taunt_reward': RewTerm(func=in_state_reward, weight=0.2, params={'desired_state': TauntState}),
     }
     signal_subscriptions = {
@@ -634,7 +634,7 @@ if __name__ == '__main__':
 
     # Start here if you want to train from a specific timestep. e.g:
     # my_agent = RecurrentPPOAgent(file_path='checkpoints/experiment_9/rl_model_20000004_steps.zip')
-    my_agent = SB3Agent(sb3_class=PPO, file_path='checkpoints/experiment_9/rl_model_24000007_steps.zip')
+    my_agent = SB3Agent(sb3_class=PPO, file_path='checkpoints/experiment_9/rl_model_30000013_steps.zip')
 
     # Reward manager
     reward_manager = gen_reward_manager()
