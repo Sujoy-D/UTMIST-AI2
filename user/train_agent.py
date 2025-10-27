@@ -479,6 +479,33 @@ def head_to_middle_reward(
 
     return reward
 
+def stay_on_platform_reward(env: WarehouseBrawl) -> float:
+    player: Player = env.objects["player"]
+    platformX = env.objects['platform1'].body.position[0]
+
+    if player.body.position.x < -7.0:
+        return -0.2
+    elif -7.0 <= player.body.position.x <= -6.2:
+        return -0.2 * (1 - (player.body.position.x + 7.0 / 0.8))
+    elif -2.8 <= player.body.position.x <= -2.0:
+        return -0.2 * (1 - (- player.body.position.x - 2.0 / 0.8))
+    elif -2.0 < player.body.position.x < platformX - 1:
+        return -0.2
+    elif platformX - 1 <= player.body.position.x <= platformX - 0.6:
+        return -0.2 * (1 - (player.body.position.x - platformX + 1 / 0.6))
+    elif platformX + 0.4 <= player.body.position.x <= platformX + 1:
+        return -0.2 * (1 - (- player.body.position.x + platformX + 1 / 0.6))
+    elif platformX + 1 < player.body.position.x < 2.0:
+        return -0.2
+    elif 2.0 <= player.body.position.x <= 2.8:
+        return -0.2 * (1 - (player.body.position.x - 2.0 / 0.8))
+    elif 6.2 <= player.body.position.x <= 7.0:
+        return -0.2 * (1 - (- player.body.position.x + 7.0 / 0.8))
+    elif player.body.position.x > 7.0:
+        return -0.2
+    else:
+        return 0.0
+
 def head_to_opponent(
     env: WarehouseBrawl,
 ) -> float:
@@ -544,20 +571,21 @@ Add your dictionary of RewardFunctions here using RewTerms
 def gen_reward_manager():
     reward_functions = {
         #'target_height_reward': RewTerm(func=base_height_l2, weight=0.0, params={'target_height': -4, 'obj_name': 'player'}),
-        'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=0.5),
-        'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=1.0),
+        'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=4),
+        'stay_on_platform': RewTerm(func=stay_on_platform_reward, weight=2),
+        #'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=1.0),
         #'head_to_middle_reward': RewTerm(func=head_to_middle_reward, weight=0.01),
         #'head_to_opponent': RewTerm(func=head_to_opponent, weight=0.05),
-        'penalize_attack_reward': RewTerm(func=in_state_reward, weight=-0.04, params={'desired_state': AttackState}),
-        'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=-0.01),
+        #'penalize_attack_reward': RewTerm(func=in_state_reward, weight=-0.04, params={'desired_state': AttackState}),
+        #'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=-0.01),
         #'taunt_reward': RewTerm(func=in_state_reward, weight=0.2, params={'desired_state': TauntState}),
     }
     signal_subscriptions = {
         'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=50)),
         'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=8)),
-        'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=5)),
-        'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=10)),
-        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=15))
+        #'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=5)),
+        #'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=10)),
+        #'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=15))
     }
     return RewardManager(reward_functions, signal_subscriptions)
 
@@ -588,7 +616,7 @@ if __name__ == '__main__':
     # Set save settings here:
     save_handler = SaveHandler(
         agent=my_agent, # Agent to save
-        save_freq=100_000, # Save frequency
+        save_freq=5_000_000, # Save frequency
         max_saved=40, # Maximum number of saved models
         save_path='checkpoints', # Save path
         run_name='experiment_9',
