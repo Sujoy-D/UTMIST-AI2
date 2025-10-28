@@ -14,6 +14,9 @@ b) Continue training from a specific timestep given an input `file_path`
 # -------------------------------------------------------------------
 
 import torch 
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+torch.set_float32_matmul_precision("high")
 import gymnasium as gym
 from torch.nn import functional as F
 from torch import nn as nn
@@ -48,11 +51,12 @@ class SB3Agent(Agent):
         super().__init__(file_path)
 
     def _initialize(self) -> None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         if self.file_path is None:
-            self.model = self.sb3_class("MlpPolicy", self.env, verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01)
+            self.model = self.sb3_class("MlpPolicy", self.env, verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01, device=device)
             del self.env
         else:
-            self.model = self.sb3_class.load(self.file_path)
+            self.model = self.sb3_class.load(self.file_path, device=device)
 
     def _gdown(self) -> str:
         # Call gdown to your link
@@ -74,7 +78,6 @@ class SB3Agent(Agent):
         self.model.learn(
             total_timesteps=total_timesteps,
             log_interval=log_interval,
-            reset_num_timesteps=False,
         )
 
 class RecurrentPPOAgent(Agent):
@@ -506,28 +509,29 @@ def head_to_middle_reward(
 
 def stay_on_platform_reward(env: WarehouseBrawl) -> float:
     player: Player = env.objects["player"]
-    platformX = env.objects['platform1'].body.position[0]
+    platformX = env.objects['platform1'].body.position.x
+    dt = env.dt
 
     if player.body.position.x < -7.0:
-        return -1.0
+        return -1.0 * dt
     elif -7.0 <= player.body.position.x <= -6.2:
-        return -1.0 * (1 - (player.body.position.x + 7.0 / 0.8))
+        return -1.0 * (1 - ((player.body.position.x + 7.0) / 0.8)) * dt
     elif -2.8 <= player.body.position.x <= -2.0:
-        return -1.0 * (1 - (- player.body.position.x - 2.0 / 0.8))
+        return -1.0 * (1 - ((- player.body.position.x - 2.0) / 0.8)) * dt
     elif -2.0 < player.body.position.x < platformX - 1:
-        return -1.0
+        return -1.0 * dt
     elif platformX - 1 <= player.body.position.x <= platformX - 0.6:
-        return -1.0 * (1 - (player.body.position.x - platformX + 1 / 0.6))
+        return -1.0 * (1 - ((player.body.position.x - platformX + 1) / 0.6)) * dt
     elif platformX + 0.4 <= player.body.position.x <= platformX + 1:
-        return -1.0 * (1 - (- player.body.position.x + platformX + 1 / 0.6))
+        return -1.0 * (1 - ((- player.body.position.x + platformX + 1) / 0.6)) * dt
     elif platformX + 1 < player.body.position.x < 2.0:
-        return -1.0
+        return -1.0 * dt
     elif 2.0 <= player.body.position.x <= 2.8:
-        return -1.0 * (1 - (player.body.position.x - 2.0 / 0.8))
+        return -1.0 * (1 - ((player.body.position.x - 2.0) / 0.8)) * dt
     elif 6.2 <= player.body.position.x <= 7.0:
-        return -1.0 * (1 - (- player.body.position.x + 7.0 / 0.8))
+        return -1.0 * (1 - ((- player.body.position.x + 7.0) / 0.8)) * dt
     elif player.body.position.x > 7.0:
-        return -1.0
+        return -1.0 * dt
     else:
         return 0.0
     
@@ -630,11 +634,12 @@ if __name__ == '__main__':
     my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
 
     # Start here if you want to train from scratch. e.g:
-    # my_agent = RecurrentPPOAgent()
+    my_agent = RecurrentPPOAgent()
+    # my_agent = SB3Agent(sb3_class=PPO)
 
     # Start here if you want to train from a specific timestep. e.g:
     # my_agent = RecurrentPPOAgent(file_path='checkpoints/experiment_9/rl_model_20000004_steps.zip')
-    my_agent = SB3Agent(sb3_class=PPO, file_path='checkpoints/experiment_9/rl_model_30000013_steps.zip')
+    # my_agent = SB3Agent(sb3_class=PPO, file_path='checkpoints/experiment_9/rl_model_31000014_steps.zip')
 
     # Reward manager
     reward_manager = gen_reward_manager()
@@ -650,8 +655,8 @@ if __name__ == '__main__':
         save_freq=1_000_000, # Save frequency
         max_saved=40, # Maximum number of saved models
         save_path='checkpoints', # Save path
-        run_name='experiment_9',
-        mode=SaveHandlerMode.RESUME # Save mode, FORCE or RESUME
+        run_name='experiment_8',
+        mode=SaveHandlerMode.FORCE # Save mode, FORCE or RESUME
     )
 
     # Set opponent settings here:
