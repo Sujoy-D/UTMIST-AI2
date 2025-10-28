@@ -1281,17 +1281,19 @@ if __name__ == '__main__':
     # OPTION 1: Start fresh with optimized RecurrentPPO for performance testing
     # my_agent = RecurrentPPOAgent()
 
-    # OPTION 2: Load RecurrentPPO checkpoint (when available)
-    # my_agent = RecurrentPPOAgent(file_path='checkpoints/experiment_optimized/rl_model_50001_steps.zip')
+    # OPTION 2: Load existing PPO checkpoint (FIXED - use SB3Agent for regular PPO checkpoints)
+    my_agent = SB3Agent(sb3_class=PPO, file_path='checkpoints/experiment_optimized/rl_model_2000039_steps.zip')
+
+    # If you want to use RecurrentPPO instead, start fresh:
+    # my_agent = RecurrentPPOAgent()
 
     # Note: Cannot load regular PPO checkpoints with RecurrentPPO due to LSTM architecture differences
-    # If you want to continue from regular PPO, use SB3Agent instead:
-    my_agent = SB3Agent(sb3_class=PPO, file_path='checkpoints/experiment_optimized/rl_model_10300206_steps')
+
 
     # Reward manager
     reward_manager = gen_reward_manager()
     # Self-play settings
-    selfplay_handler = SelfPlayRandom(
+    selfplay_handler = SelfPlayLatest(
         partial(type(my_agent)), # Agent class and its keyword arguments
                                  # type(my_agent) = Agent class
     )
@@ -1299,19 +1301,19 @@ if __name__ == '__main__':
     # Set save settings here:
     save_handler = SaveHandler(
         agent=my_agent, # Agent to save
-        save_freq=50_000, # Reduced save frequency for faster checkpoints
+        save_freq=100_000, # Reduced save frequency for faster checkpoints
         max_saved=40, # Maximum number of saved models
         save_path='checkpoints', # Save path
         run_name='experiment_optimized',  # New experiment name for optimized training
-        mode=SaveHandlerMode.RESUME # FORCE to start a fresh optimized experiment
+        mode=SaveHandlerMode.RESUME
     )
 
     # Set opponent settings here:
     # REDUCED opponent variety for faster training
     opponent_specification = {
-                    'self_play': (3.0, selfplay_handler),  # Reduced self-play weight
-                    'constant_agent': (2.0, partial(ConstantAgent)),  # Increased simple agent weight
-                    'based_agent': (5.0, partial(BasedAgent)),  # Increased simple agent weight
+                    'self_play': (8.0, selfplay_handler),  # Reduced self-play weight
+                    'constant_agent': (0.5, partial(ConstantAgent)),  # Increased simple agent weight
+                    'based_agent': (1.5, partial(BasedAgent)),  # Increased simple agent weight
                 }
     opponent_cfg = OpponentsCfg(opponents=opponent_specification)
 
