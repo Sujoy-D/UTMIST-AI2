@@ -93,7 +93,7 @@ class RecurrentPPOAgent(Agent):
         if self.file_path is None:
             policy_kwargs = {
                 'activation_fn': nn.ReLU,
-                'lstm_hidden_size': 512,
+                'lstm_hidden_size': 256,  # Reduced from 512 for performance
                 'net_arch': [dict(pi=[32, 32], vf=[32, 32])],
                 'shared_lstm': True,
                 'enable_critic_lstm': False,
@@ -103,8 +103,8 @@ class RecurrentPPOAgent(Agent):
             self.model = RecurrentPPO("MlpLstmPolicy",
                                       self.env,
                                       verbose=0,
-                                      n_steps=30*90*20,
-                                      batch_size=16,
+                                      n_steps=2048,  # Reduced from 54,000 to 2,048 for much faster episodes
+                                      batch_size=64,   # Increased from 16 to 64 for better efficiency
                                       ent_coef=0.05,
                                       policy_kwargs=policy_kwargs)
             del self.env
@@ -161,7 +161,7 @@ class BasedAgent(Agent):
                 action = self.act_helper.press_keys(['a'])
 
         # Note: Passing in partial action
-        # Jump if below map or opponent is above you
+        # Jump if falling too low (Y+ is downward) or opponent is below you
         if (pos[1] > 1.6 or pos[1] > opp_pos[1]) and self.time % 2 == 0:
             action = self.act_helper.press_keys(['space'], action)
 
@@ -1052,6 +1052,9 @@ def enhanced_survival_reward(
 
     if on_ground1 or on_ground2 or on_moving_platform:
         reward += platform_bonus
+    else:
+        # Small penalty for being off platform (encourages getting back to safety)
+        reward -= 0.1
 
     # 3. STOCK LOSS DETECTION
     if player.stocks < player.last_stock_count:
@@ -1108,46 +1111,160 @@ def death_penalty_reward(
     player.prev_stock_count = player.stocks
     return 0.0
 
+def boundary_penalty_reward(
+    env: WarehouseBrawl,
+    boundary_penalty: float = 15.0,
+    x_danger_zone: float = 12.0,
+    y_danger_zone_bottom: float = 6.0,
+    y_danger_zone_top: float = -6.0
+) -> float:
+    """
+    Dedicated boundary penalty function that heavily penalizes going near or outside game boundaries.
+
+    Game coordinate system and boundaries:
+    - Coordinate system: X increases right, Y increases DOWNWARD
+    - Stage width: 29.8 tiles, so X boundaries are approximately ±14.9
+    - Stage height: 16.8 tiles, so Y boundaries are approximately ±8.4
+    - Y+ is downward (falling), Y- is upward (off-screen top)
+
+    Args:
+        env (WarehouseBrawl): The game environment.
+        boundary_penalty (float): Penalty scaling factor for boundary violations.
+        x_danger_zone (float): X distance from center before penalty starts (±value).
+        y_danger_zone_bottom (float): Y value below which penalty starts (falling).
+        y_danger_zone_top (float): Y value above which penalty starts (going off-screen top).
+
+    Returns:
+        float: The computed boundary penalty (negative reward).
+    """
+    player: Player = env.objects["player"]
+
+    x_pos = player.body.position.x
+    y_pos = player.body.position.y
+
+    penalty = 0.0
+
+    # X boundaries: ±14.9 (stage width), start penalizing at x_danger_zone
+    if abs(x_pos) > x_danger_zone:
+        boundary_distance = abs(x_pos) - x_danger_zone
+        penalty += boundary_distance * boundary_penalty
+
+    # Y boundaries - remember Y+ is downward in this coordinate system
+    if y_pos > y_danger_zone_bottom:  # Falling too low (positive Y)
+        boundary_distance = y_pos - y_danger_zone_bottom
+        penalty += boundary_distance * boundary_penalty
+    elif y_pos < y_danger_zone_top:  # Going too high (negative Y, off-screen top)
+        boundary_distance = y_danger_zone_top - y_pos
+        penalty += boundary_distance * boundary_penalty
+
+    return -penalty * env.dt
+
+def platform_awareness_reward(
+    env: WarehouseBrawl,
+    platform_bonus: float = 1.0
+) -> float:
+    """
+    Rewards staying on safe platforms and penalizes being in the air too long.
+
+    Platform locations (accounting for Y+ downward coordinate system):
+    - Ground 1: center at (4.5, 1), width 10, so x range [-0.5, 9.5], y around 1
+    - Ground 2: center at (-4.5, 3), width 10, so x range [-9.5, 0.5], y around 3
+    - Moving platform: center at (0, 1), width 2, so x range [-1, 1], y around 1
+
+    Args:
+        env (WarehouseBrawl): The game environment.
+        platform_bonus (float): Reward for being on a safe platform.
+
+    Returns:
+        float: The computed platform awareness reward.
+    """
+    player: Player = env.objects["player"]
+
+    x_pos = player.body.position.x
+    y_pos = player.body.position.y
+
+    # Check if player is on any platform (with tolerance for Y position)
+    on_ground1 = (-0.5 <= x_pos <= 9.5) and (0.5 <= y_pos <= 1.5)
+    on_ground2 = (-9.5 <= x_pos <= 0.5) and (2.5 <= y_pos <= 3.5)
+    on_moving_platform = (-1.0 <= x_pos <= 1.0) and (0.5 <= y_pos <= 1.5)
+
+    if on_ground1 or on_ground2 or on_moving_platform:
+        return platform_bonus * env.dt
+    else:
+        # Small penalty for being off platform (encourages getting back to safety)
+        return -0.1 * env.dt
+
+# -------------------------------------------------------------------------
+# ----------------------------- REWARD MANAGER ---------------------------
+# -------------------------------------------------------------------------
+
+# SIMPLIFIED REWARD FUNCTIONS FOR PERFORMANCE
+def simple_positioning_reward(env: WarehouseBrawl) -> float:
+    """Simplified positioning reward that only encourages getting close to opponent."""
+    player: Player = env.objects["player"]
+    opponent: Player = env.objects["opponent"]
+
+    distance = ((player.body.position.x - opponent.body.position.x)**2 +
+                (player.body.position.y - opponent.body.position.y)**2)**0.5
+
+    # Simple distance-based reward
+    if distance < 2.0:
+        return 1.0 * env.dt
+    elif distance < 4.0:
+        return 0.5 * env.dt
+    else:
+        return -0.1 * env.dt
+
+def simple_attack_reward(env: WarehouseBrawl) -> float:
+    """Simplified attack reward that only rewards attacking when close."""
+    player: Player = env.objects["player"]
+    opponent: Player = env.objects["opponent"]
+
+    player_attacking = isinstance(player.state, AttackState)
+    if not player_attacking:
+        return 0.0
+
+    distance = ((player.body.position.x - opponent.body.position.x)**2 +
+                (player.body.position.y - opponent.body.position.y)**2)**0.5
+
+    # Reward attacking when close, penalize when far
+    if distance < 3.0:
+        return 1.0 * env.dt
+    else:
+        return -0.5 * env.dt
 
 '''
 Add your dictionary of RewardFunctions here using RewTerms
 '''
 def gen_reward_manager():
+    # SIMPLIFIED REWARD FUNCTIONS FOR FASTER TRAINING
     reward_functions = {
-        # ENHANCED SURVIVAL - Includes boundary constraints and platform awareness
-        'enhanced_survival_reward': RewTerm(func=enhanced_survival_reward, weight=3.0),
-        'death_penalty_reward': RewTerm(func=death_penalty_reward, weight=5.0),
+        # CORE DAMAGE - Most important signal, highest weight
+        'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=30.0, params={'mode': RewardMode.ASYMMETRIC_OFFENSIVE}),
 
-        # UNIFIED POSITIONING & APPROACH - Combines 5 positioning/approach rewards
-        'unified_positioning_reward': RewTerm(func=unified_positioning_reward, weight=15.0),  # High weight for engagement
+        # SIMPLIFIED SURVIVAL - Basic death penalty only
+        'death_penalty_reward': RewTerm(func=death_penalty_reward, weight=10.0),
 
-        # UNIFIED ATTACK EFFECTIVENESS - Combines 5 attack-related rewards
-        'unified_attack_effectiveness_reward': RewTerm(func=unified_attack_effectiveness_reward, weight=20.0),  # Highest weight for attacking
+        # BOUNDARY SAFETY - Prevent going out of bounds
+        'boundary_penalty_reward': RewTerm(func=boundary_penalty_reward, weight=5.0),
 
-        # UNIFIED INPUT CONTROL - Combines 3 anti-spam/input quality rewards
-        'unified_input_control_reward': RewTerm(func=unified_input_control_reward, weight=3.0),
+        # PLATFORM AWARENESS - Stay on safe ground
+        'platform_awareness_reward': RewTerm(func=platform_awareness_reward, weight=2.0),
 
-        # UNIFIED MOVEMENT - Combines movement toward opponent
-        'unified_movement_reward': RewTerm(func=unified_movement_reward, weight=2.0),
+        # SIMPLIFIED POSITIONING - Only close-range engagement
+        'positioning_reward': RewTerm(func=simple_positioning_reward, weight=5.0),
 
-        # STRATEGIC ATTACK REWARDS - Keep separate for specific mechanics
-        'attack_timing_reward': RewTerm(func=attack_timing_reward, weight=5.0),
-        'combo_initiation_reward': RewTerm(func=combo_initiation_reward, weight=8.0),
-        'weapon_preference_reward': RewTerm(func=weapon_preference_reward, weight=4.0),
+        # SIMPLIFIED ATTACK - Only attack when close
+        'attack_reward': RewTerm(func=simple_attack_reward, weight=8.0),
 
-        # CORE DAMAGE - Keep separate as it's the most important signal
-        'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=25.0, params={'mode': RewardMode.ASYMMETRIC_OFFENSIVE}),  # HIGHEST weight
-
-        # SAFETY AND CONTROL - Minimal weights for basic constraints
-        'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=0.5),
+        # BASIC CONSTRAINTS - Minimal overhead
         'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=-0.1),
     }
     signal_subscriptions = {
         'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=100)),
-        'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=20)),
+        'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=30)),
         'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=15)),
-        'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=25)),
-        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=10))
+        'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=10))
     }
     return RewardManager(reward_functions, signal_subscriptions)
 
@@ -1161,56 +1278,43 @@ if __name__ == '__main__':
     # Create agent
     # my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
 
-    # OPTION 1: Start fresh with RecurrentPPO (since existing checkpoints are regular PPO)
-    print("Creating RecurrentPPO agent...")
-    my_agent = RecurrentPPOAgent()
-    print("Agent created successfully.")
+    # OPTION 1: Start fresh with optimized RecurrentPPO for performance testing
+    # my_agent = RecurrentPPOAgent()
 
-    # OPTION 2: Load RecurrentPPO checkpoint (only works if you have RecurrentPPO checkpoints)
-    # my_agent = RecurrentPPOAgent(file_path='checkpoints/experiment_recurrent/rl_model_XXXXX_steps.zip')
+    # OPTION 2: Load RecurrentPPO checkpoint (when available)
+    # my_agent = RecurrentPPOAgent(file_path='checkpoints/experiment_optimized/rl_model_50001_steps.zip')
 
     # Note: Cannot load regular PPO checkpoints with RecurrentPPO due to LSTM architecture differences
     # If you want to continue from regular PPO, use SB3Agent instead:
-    # my_agent = SB3Agent(sb3_class=PPO, file_path='checkpoints/experiment_9/rl_model_525811_steps.zip')
+    my_agent = SB3Agent(sb3_class=PPO, file_path='checkpoints/experiment_optimized/rl_model_10300206_steps')
 
     # Reward manager
-    print("Setting up reward manager...")
     reward_manager = gen_reward_manager()
-    print("Reward manager set up.")
-    
     # Self-play settings
-    print("Setting up self-play handler...")
     selfplay_handler = SelfPlayRandom(
         partial(type(my_agent)), # Agent class and its keyword arguments
                                  # type(my_agent) = Agent class
     )
-    print("Self-play handler set up.")
 
     # Set save settings here:
-    print("Setting up save handler...")
     save_handler = SaveHandler(
         agent=my_agent, # Agent to save
-        save_freq=100_000, # Save frequency
+        save_freq=50_000, # Reduced save frequency for faster checkpoints
         max_saved=40, # Maximum number of saved models
         save_path='checkpoints', # Save path
-        run_name='experiment_recurrent',  # New experiment name for RecurrentPPO
-        mode=SaveHandlerMode.FORCE # Save mode, FORCE or RESUME
+        run_name='experiment_optimized',  # New experiment name for optimized training
+        mode=SaveHandlerMode.RESUME # FORCE to start a fresh optimized experiment
     )
-    print("Save handler set up.")
 
     # Set opponent settings here:
-    # NOTE: Reduced self-play weight initially since we don't have RecurrentPPO checkpoints yet
-    # After first checkpoint is saved (~100k steps), you can increase self-play weight
-    print("Setting up opponent configuration...")
+    # REDUCED opponent variety for faster training
     opponent_specification = {
-                    'self_play': (2, selfplay_handler),  # Reduced until we have RecurrentPPO checkpoints
-                    'constant_agent': (2.0, partial(ConstantAgent)),
-                    'based_agent': (6.0, partial(BasedAgent)),  # Increased for learning
+                    'self_play': (3.0, selfplay_handler),  # Reduced self-play weight
+                    'constant_agent': (2.0, partial(ConstantAgent)),  # Increased simple agent weight
+                    'based_agent': (5.0, partial(BasedAgent)),  # Increased simple agent weight
                 }
     opponent_cfg = OpponentsCfg(opponents=opponent_specification)
-    print("Opponent configuration set up.")
 
-    print("Starting training...")
     train(my_agent,
         reward_manager,
         save_handler,
