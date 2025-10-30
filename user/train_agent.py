@@ -172,7 +172,7 @@ class BasedAgent(Agent):
                 action = self.act_helper.press_keys(['a'])
 
         # Note: Passing in partial action
-        # Jump if falling too low (Y+ is downward) or opponent is below you
+        # Jump if below map or opponent is above you
         if (pos[1] > 1.6 or pos[1] > opp_pos[1]) and self.time % 2 == 0:
             action = self.act_helper.press_keys(['space'], action)
 
@@ -343,58 +343,122 @@ class ConstrainedActorCriticPolicy(ActorCriticPolicy):
     SB3-compatible Actor-Critic policy with constrained standard deviation.
     This replaces the built-in MlpPolicy to prevent std explosion.
     """
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        
-        # Override the action distribution to use constrained std
-        if hasattr(self, 'action_dist') and isinstance(self.action_dist, DiagGaussianDistribution):
-            # Store original log_std for modification
-            self._original_log_std = self.action_dist.log_std
-    
+
     def _build(self, lr_schedule) -> None:
         """Override build to ensure constrained initialization."""
+        print("DEBUG: ConstrainedActorCriticPolicy._build() called")
         super()._build(lr_schedule)
-        
-        # After building, clamp the log_std parameter
-        if hasattr(self.action_dist, 'log_std'):
-            # Initialize with constrained values
-            with torch.no_grad():
-                self.action_dist.log_std.data.fill_(-1.0)  # exp(-1) ≈ 0.37
-    
-    def forward(self, obs, deterministic: bool = False):
-        """Override forward to apply std constraints during every forward pass."""
-        # Get features from the feature extractor
-        features = self.extract_features(obs)
-        
-        # Get action logits and values
-        latent_pi, latent_vf = self.mlp_extractor(features)
-        
-        # Forward through policy and value heads
-        distribution = self._get_action_dist_from_latent(latent_pi)
-        actions = distribution.get_actions(deterministic=deterministic)
-        log_prob = distribution.log_prob(actions)
-        values = self.value_net(latent_vf)
-        
-        # CRITICAL: Clamp log_std to prevent explosion
-        if hasattr(distribution, 'distribution') and hasattr(distribution.distribution, 'scale'):
-            # For continuous actions, clamp the scale (std)
-            with torch.no_grad():
-                if hasattr(self.action_dist, 'log_std'):
-                    self.action_dist.log_std.data.clamp_(min=-4.0, max=-0.5)
-        
-        return actions, values, log_prob
-    
+
+        print(f"DEBUG: After super()._build, action_dist: {self.action_dist}")
+        print(f"DEBUG: Action distribution type: {type(self.action_dist)}")
+
+        # Force initialization of action distribution if it's not created yet
+        self._force_action_dist_init()
+
+        # CRITICAL: Replace SB3's action distribution with constrained version
+        self._setup_constrained_distribution()
+        print(f"DEBUG: After _build, action_dist type: {type(self.action_dist)}")
+
+    def _force_action_dist_init(self):
+        """Force initialization of the action distribution."""
+        print("DEBUG: Forcing action distribution initialization...")
+
+        # If action_dist doesn't exist, create it manually
+        if not hasattr(self, 'action_dist') or self.action_dist is None:
+            print("DEBUG: action_dist is None, creating DiagGaussianDistribution...")
+            from stable_baselines3.common.distributions import DiagGaussianDistribution
+
+            # Get action dimension from action space
+            action_dim = self.action_space.shape[0]
+            print(f"DEBUG: Action dimension: {action_dim}")
+
+            # Create the distribution
+            self.action_dist = DiagGaussianDistribution(action_dim)
+            print(f"DEBUG: Created action_dist: {self.action_dist}")
+
+            # Initialize log_std parameter manually
+            if hasattr(self.action_dist, 'log_std'):
+                if self.action_dist.log_std is None:
+                    # Create log_std parameter
+                    import torch.nn as nn
+                    self.action_dist.log_std = nn.Parameter(torch.ones(action_dim, dtype=torch.float32) * -1.5)
+                    print(f"DEBUG: Created log_std parameter: {self.action_dist.log_std.shape}")
+                else:
+                    print(f"DEBUG: log_std already exists: {self.action_dist.log_std.shape}")
+            else:
+                print("DEBUG: action_dist has no log_std attribute")
+        else:
+            print(f"DEBUG: action_dist already exists: {self.action_dist}")
+
+    def _setup_model(self) -> None:
+        """Override setup to add clamping hooks."""
+        print("DEBUG: ConstrainedActorCriticPolicy._setup_model() called")
+        super()._setup_model()
+
+        # Force action dist initialization here too
+        self._force_action_dist_init()
+
+        # Ensure distribution is properly constrained
+        self._setup_constrained_distribution()
+        print(f"DEBUG: After _setup_model, action_dist: {self.action_dist}")
+
+    def _setup_constrained_distribution(self):
+        """Set up the action distribution with proper log_std constraints."""
+        print(f"DEBUG: _setup_constrained_distribution called, action_dist: {self.action_dist}")
+
+        if hasattr(self, 'action_dist') and self.action_dist is not None:
+            if hasattr(self.action_dist, 'log_std') and self.action_dist.log_std is not None:
+                print(f"DEBUG: Found log_std parameter: {self.action_dist.log_std.shape}")
+
+                # FORCE initialization of log_std with constrained values
+                with torch.no_grad():
+                    self.action_dist.log_std.data.fill_(-1.5)  # exp(-1.5) ≈ 0.22
+                    print(f"DEBUG: Initialized log_std to -1.5, actual values: {self.action_dist.log_std.data}")
+
+                # Add a forward hook to clamp log_std EVERY time it's accessed
+                def clamp_log_std_forward_hook(module, input, output):
+                    if hasattr(module, 'log_std') and module.log_std is not None:
+                        with torch.no_grad():
+                            module.log_std.data.clamp_(min=-4.0, max=-0.5)
+                    return output
+
+                # Register forward hook (called during every forward pass)
+                self.action_dist.register_forward_hook(clamp_log_std_forward_hook)
+
+                # Also add backward hook to clamp after gradients
+                def clamp_log_std_backward_hook(grad):
+                    with torch.no_grad():
+                        self.action_dist.log_std.data.clamp_(min=-4.0, max=-0.5)
+                    return grad
+
+                if self.action_dist.log_std.requires_grad:
+                    self.action_dist.log_std.register_hook(clamp_log_std_backward_hook)
+                    print("DEBUG: Registered gradient hook for log_std")
+            else:
+                print("DEBUG: No log_std parameter found or it's None")
+        else:
+            print("DEBUG: No action_dist found")
+
     def _get_action_dist_from_latent(self, latent_pi):
         """Override to apply clamping to distribution parameters."""
         mean_actions = self.action_net(latent_pi)
-        
-        # CRITICAL: Apply clamping before creating distribution
-        if hasattr(self.action_dist, 'log_std'):
-            # Clamp log_std during distribution creation
+
+        # CRITICAL: Force clamp log_std before every distribution creation
+        if hasattr(self.action_dist, 'log_std') and self.action_dist.log_std is not None:
             with torch.no_grad():
                 self.action_dist.log_std.data.clamp_(min=-4.0, max=-0.5)
-        
-        return self.action_dist.proba_distribution(mean_actions)
+
+        # Use parent class implementation (it will use our clamped log_std)
+        return super()._get_action_dist_from_latent(latent_pi)
+
+    def forward(self, obs, deterministic=False):
+        """Override forward to ensure log_std is always clamped."""
+        # Clamp before any forward pass
+        if hasattr(self.action_dist, 'log_std') and self.action_dist.log_std is not None:
+            with torch.no_grad():
+                self.action_dist.log_std.data.clamp_(min=-4.0, max=-0.5)
+
+        return super().forward(obs, deterministic)
 
 class MLPExtractor(BaseFeaturesExtractor):
     '''
@@ -420,12 +484,12 @@ class MLPExtractor(BaseFeaturesExtractor):
 
 class ConstrainedMLPExtractor(BaseFeaturesExtractor):
     '''
-    Constrained MLP Base Features Extractor that extracts features properly while using 
+    Constrained MLP Base Features Extractor that extracts features properly while using
     conservative initialization to prevent NaN crashes.
     '''
     def __init__(self, observation_space: gym.Space, features_dim: int = 64, hidden_dim: int = 64):
         super(ConstrainedMLPExtractor, self).__init__(observation_space, features_dim)
-        
+
         # Create a feature extraction network that outputs the correct features_dim
         self.shared_net = nn.Sequential(
             nn.Linear(observation_space.shape[0], hidden_dim, dtype=torch.float32),
@@ -434,10 +498,10 @@ class ConstrainedMLPExtractor(BaseFeaturesExtractor):
             nn.ReLU(),
             nn.Linear(hidden_dim, features_dim, dtype=torch.float32)  # Output features_dim, not action_dim
         )
-        
+
         # Use conservative initialization like ConstrainedMlpPolicy
         self._init_weights()
-    
+
     def _init_weights(self):
         """Initialize weights with moderate values for stable learning."""
         for module in self.modules():
@@ -455,14 +519,12 @@ class ConstrainedMLPExtractor(BaseFeaturesExtractor):
         return dict(
             features_extractor_class=cls,
             features_extractor_kwargs=dict(features_dim=features_dim, hidden_dim=hidden_dim),
-            # CRITICAL: Constrained policy parameters to prevent std explosion
+            # Policy architecture settings
             log_std_init=-1.0,  # Start with moderate std (exp(-1) ≈ 0.37)
             ortho_init=True,    # Enable orthogonal initialization
             activation_fn=nn.ReLU,
-            net_arch=[dict(pi=[64, 64], vf=[64, 64])],  # Larger networks
-            # ADDITIONAL SAFETY: Constrain std bounds more aggressively
-            use_sde=False,  # Disable state-dependent exploration (can cause instability)
-            normalize_images=False,  # We're not using images
+            net_arch=dict(pi=[64, 64], vf=[64, 64]),  # SB3 v1.8.0+ format
+            # Optimizer settings
             optimizer_class=torch.optim.Adam,  # Explicit optimizer
             optimizer_kwargs=dict(eps=1e-8, weight_decay=0.0)  # Conservative optimizer settings
         )
@@ -475,26 +537,35 @@ class CustomAgent(Agent):
 
     def _initialize(self) -> None:
         if self.file_path is None:
-            # Use constrained policy with balanced hyperparameters
-            # Since we have constrained std, we can use more reasonable values
+            # Simple setup with constrained policy and minimal customization
             policy_kwargs = self.extractor.get_policy_kwargs() if self.extractor else {}
 
-            # FIXED: Use our custom constrained policy instead of "MlpPolicy"
-            self.model = self.sb3_class(ConstrainedActorCriticPolicy, self.env,
-                                      policy_kwargs=policy_kwargs,
-                                      verbose=0,
-                                      n_steps=30*90*3,
-                                      batch_size=64,  # Standard batch size
-                                      ent_coef=0.05,  # Higher entropy for exploration
-                                      learning_rate=0.0003,  # Standard PPO learning rate
-                                      clip_range=0.2,  # Standard PPO clip range
-                                      max_grad_norm=0.1,  # MUCH stronger gradient clipping to prevent explosion
-                                      vf_coef=0.5,  # Standard value function weight
-                                      target_kl=0.01,  # TIGHTER KL constraint to prevent policy divergence
-                                      # ADDITIONAL SAFETY MEASURES:
-                                      gae_lambda=0.95,  # Standard GAE
-                                      normalize_advantage=True,  # Normalize advantages for stability
-                                      use_sde=False)  # Disable state-dependent exploration
+            print(f"DEBUG: Using policy_kwargs: {policy_kwargs}")
+
+            try:
+                # Use constrained policy with simple settings
+                print("DEBUG: Attempting to create model with ConstrainedActorCriticPolicy...")
+                self.model = self.sb3_class(ConstrainedActorCriticPolicy, self.env,
+                                          policy_kwargs=policy_kwargs,
+                                          verbose=0,
+                                          n_steps=30*90*3,
+                                          batch_size=128,
+                                          ent_coef=0.01)
+                print("DEBUG: ConstrainedActorCriticPolicy created successfully!")
+                print(f"DEBUG: Model policy type: {type(self.model.policy)}")
+
+                # CRITICAL: Force action distribution initialization now
+                self._initialize_action_dist()
+
+            except Exception as e:
+                print(f"Custom policy failed, using MlpPolicy: {e}")
+                # Fallback to standard MlpPolicy
+                self.model = self.sb3_class("MlpPolicy", self.env,
+                                          policy_kwargs=policy_kwargs,
+                                          verbose=0,
+                                          n_steps=30*90*3,
+                                          batch_size=128,
+                                          ent_coef=0.01)
             del self.env
         else:
             self.model = self.sb3_class.load(self.file_path)
@@ -516,9 +587,42 @@ class CustomAgent(Agent):
     def learn(self, env, total_timesteps, log_interval: int = 1, verbose=0):
         self.model.set_env(env)
         self.model.verbose = verbose
+
+        # Add a callback to monitor log_std values during training
+        class LogStdMonitorCallback:
+            def __init__(self, model):
+                self.model = model
+                self.step_count = 0
+
+            def __call__(self, locals_, globals_):
+                self.step_count += 1
+
+                # Every 1000 steps, print the actual log_std values
+                if self.step_count % 1000 == 0:
+                    try:
+                        policy = self.model.policy
+                        if (hasattr(policy, 'action_dist') and
+                            policy.action_dist is not None and
+                            hasattr(policy.action_dist, 'log_std') and
+                            policy.action_dist.log_std is not None):
+
+                            log_std_val = policy.action_dist.log_std.data.cpu().numpy()
+                            std_val = np.exp(log_std_val)
+                            print(f"Step {self.step_count}: log_std range [{log_std_val.min():.3f}, {log_std_val.max():.3f}], std range [{std_val.min():.3f}, {std_val.max():.3f}]")
+                        else:
+                            print(f"Step {self.step_count}: action_dist not yet initialized")
+                    except Exception as e:
+                        print(f"Step {self.step_count}: Error accessing log_std: {e}")
+
+                return True
+
+        # Set the callback
+        callback = LogStdMonitorCallback(self.model)
+
         self.model.learn(
             total_timesteps=total_timesteps,
             log_interval=log_interval,
+            callback=callback
         )
 
 # --------------------------------------------------------------------------------
@@ -1169,45 +1273,44 @@ def weapon_approach_reward(env: WarehouseBrawl) -> float:
 Add your dictionary of RewardFunctions here using RewTerms
 '''
 def gen_reward_manager():
-    # BALANCED REWARD SYSTEM - Reasonable weights with constrained policy protection
+    # PROPORTIONAL REWARD SYSTEM - Attack-prioritized weights
     reward_functions = {
         # CORE MOVEMENT & POSITIONING (consistent, every frame)
-        'movement_reward': RewTerm(func=unified_movement_reward, weight=0.1),  # Increased from 0.01
-        'positioning_reward': RewTerm(func=simple_positioning_reward, weight=0.2),  # Increased from 0.02
+        'movement_reward': RewTerm(func=unified_movement_reward, weight=0.1),  # Restored proportional
+        'positioning_reward': RewTerm(func=simple_positioning_reward, weight=0.25),  # Restored proportional
 
-        # CORE COMBAT (primary learning signal)
-        'attack_reward': RewTerm(func=simple_attack_reward, weight=0.5),  # Increased from 0.05
-        'damage_reward': RewTerm(func=simple_damage_reward, weight=1.0),  # Increased from 0.1
+        # CORE COMBAT (primary learning signal) - ATTACK PRIORITY
+        'attack_reward': RewTerm(func=simple_attack_reward, weight=2.0),  # ATTACK PRIORITY - high weight
+        'damage_reward': RewTerm(func=simple_damage_reward, weight=3.0),  # DAMAGE PRIORITY - highest weight
 
         # WEAPON COLLECTION (strategic behavior)
-        'weapon_approach_reward': RewTerm(func=weapon_approach_reward, weight=0.3),  # Increased from 0.01
+        'weapon_approach_reward': RewTerm(func=weapon_approach_reward, weight=0.5),  # Restored proportional
 
         # ENVIRONMENT CONSTRAINTS (safety boundaries)
-        'boundary_penalty': RewTerm(func=precise_boundary_penalty, weight=0.3),  # Increased from 0.05
-        'platform_reward': RewTerm(func=precise_platform_reward, weight=0.1),  # Increased from 0.01
+        'boundary_penalty': RewTerm(func=precise_boundary_penalty, weight=1.0),  # Restored proportional
+        'platform_reward': RewTerm(func=precise_platform_reward, weight=0.15),  # Restored proportional
 
         # SURVIVAL (baseline encouragement)
-        'survival_reward': RewTerm(func=simple_survival_reward, weight=0.01),  # Increased from 0.0001
-        'death_penalty': RewTerm(func=death_penalty_reward, weight=0.5),  # Increased from 0.01
+        'survival_reward': RewTerm(func=simple_survival_reward, weight=0.05),  # Slightly increased
+        'death_penalty': RewTerm(func=death_penalty_reward, weight=2.0),  # Restored proportional
 
         # INPUT QUALITY (encourage deliberate actions)
-        'button_mashing_penalty': RewTerm(func=button_mashing_penalty, weight=0.1),  # Increased from 0.02
-        'movement_contradiction_penalty': RewTerm(func=excessive_movement_penalty, weight=0.05),  # Increased from 0.01
+        'button_mashing_penalty': RewTerm(func=button_mashing_penalty, weight=0.3),  # Restored proportional
+        'movement_contradiction_penalty': RewTerm(func=excessive_movement_penalty, weight=0.1),  # Restored proportional
     }
 
     signal_subscriptions = {
         # MAJOR GAME EVENTS (meaningful rewards for key outcomes)
-        'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=10.0)),  # Increased from 0.5
-        'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=5.0)),  # Increased from 0.2
+        'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=10.0)),  # High priority for wins
+        'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=5.0)),  # High priority for KOs
 
         # TACTICAL EVENTS (moderate weights for skill development)
-        'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=2.0)),  # Increased from 0.1
+        'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=2.5)),  # Restored proportional
 
         # WEAPON MANAGEMENT (strategic importance)
-        'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=1.0)),  # Increased from 0.2
-        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=1.0))  # Increased from 0.2
+        'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=1.0)),  # Restored proportional
+        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=1.0))  # Restored proportional
     }
-
     return RewardManager(reward_functions, signal_subscriptions)
 
 # -------------------------------------------------------------------------
@@ -1241,19 +1344,18 @@ if __name__ == '__main__':
     # Set save settings here:
     save_handler = SaveHandler(
         agent=my_agent, # Agent to save
-        save_freq=100_000, # Reduced save frequency for faster checkpoints
+        save_freq=100_000, # Save frequency
         max_saved=40, # Maximum number of saved models
         save_path='checkpoints', # Save path
-        run_name='experiment_12',  # New experiment with stability fixes
-        mode=SaveHandlerMode.FORCE  # Force new experiment
+        run_name='experiment_16',
+        mode=SaveHandlerMode.FORCE # Save mode, FORCE or RESUME
     )
 
     # Set opponent settings here:
-    # REDUCED opponent variety for faster training
     opponent_specification = {
-                    'self_play': (8.0, selfplay_handler),  # Reduced self-play weight
-                    'constant_agent': (0.5, partial(ConstantAgent)),  # Increased simple agent weight
-                    'based_agent': (1.5, partial(BasedAgent)),  # Increased simple agent weight
+                    'self_play': (8, selfplay_handler),
+                    'constant_agent': (0.5, partial(ConstantAgent)),
+                    'based_agent': (1.5, partial(BasedAgent)),
                 }
     opponent_cfg = OpponentsCfg(opponents=opponent_specification)
 
