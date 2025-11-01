@@ -23,9 +23,7 @@ from stable_baselines3 import A2C, PPO, SAC, DQN, DDPG, TD3, HER
 from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
-from stable_baselines3.common.policies import ActorCriticPolicy
-from stable_baselines3.common.distributions import DiagGaussianDistribution
-from torch.distributions import Normal
+from stable_baselines3.common.callbacks import BaseCallback
 
 from environment.agent import *
 from typing import Optional, Type, List, Tuple
@@ -52,15 +50,7 @@ class SB3Agent(Agent):
 
     def _initialize(self) -> None:
         if self.file_path is None:
-            self.model = self.sb3_class("MlpPolicy", self.env, verbose=0,
-                                      n_steps=30*90*3,
-                                      batch_size=32,  # Smaller batch size for stability
-                                      ent_coef=0.0001,  # Much lower entropy coefficient
-                                      learning_rate=0.000005,  # Even lower learning rate
-                                      clip_range=0.05,  # Very small clip range
-                                      max_grad_norm=0.05,  # Stronger gradient clipping
-                                      vf_coef=0.25,  # Reduce value function coefficient
-                                      target_kl=0.01)  # Add KL divergence constraint
+            self.model = self.sb3_class("MlpPolicy", self.env, verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01)
             del self.env
         else:
             self.model = self.sb3_class.load(self.file_path)
@@ -109,15 +99,21 @@ class RecurrentPPOAgent(Agent):
                 'shared_lstm': True,
                 'enable_critic_lstm': False,
                 'share_features_extractor': True,
-
+                # Standard deviation bounds for action distribution
+                'log_std_init': -0.5,  # Initial log std dev (exp(-0.5) ≈ 0.6)
+                'use_expln': True,     # Use exponential linear unit for std dev
+                # Note: clip_mean is not supported by RecurrentActorCriticPolicy
             }
             self.model = RecurrentPPO("MlpLstmPolicy",
                                       self.env,
                                       verbose=0,
-                                      n_steps=30*90*20,
+                                      n_steps=100000000,
                                       batch_size=16,
                                       ent_coef=0.05,
-                                      policy_kwargs=policy_kwargs)
+                                      policy_kwargs=policy_kwargs,
+                                      # Additional std dev control parameters
+                                      normalize_advantage=True,
+                                      max_grad_norm=0.5)  # Gradient clipping for stability
             del self.env
         else:
             self.model = RecurrentPPO.load(self.file_path)
@@ -125,18 +121,178 @@ class RecurrentPPOAgent(Agent):
     def reset(self) -> None:
         self.episode_starts = True
 
+    def clamp_policy_std(self, min_std: float = 0.1, max_std: float = 1.0) -> None:
+        """
+        Manually clamp the policy's standard deviation to prevent extreme values.
+
+        Args:
+            min_std: Minimum allowed standard deviation
+            max_std: Maximum allowed standard deviation
+        """
+        # Clamp log std to achieve desired std bounds
+        min_log_std = np.log(min_std)
+        max_log_std = np.log(max_std)
+
+        with torch.no_grad():
+            # For RecurrentPPO with continuous actions, log_std is directly on the policy
+            if hasattr(self.model.policy, 'log_std') and hasattr(self.model.policy.log_std, 'data'):
+                old_log_std = self.model.policy.log_std.data.clone()
+                self.model.policy.log_std.data.clamp_(min_log_std, max_log_std)
+                return
+
+            # Fallback: check action_net if it exists
+            if hasattr(self.model.policy, 'action_net') and hasattr(self.model.policy.action_net, 'log_std'):
+                if hasattr(self.model.policy.action_net.log_std, 'data'):
+                    self.model.policy.action_net.log_std.data.clamp_(min_log_std, max_log_std)
+                    return
+
+    def get_current_std(self) -> float:
+        """Get the current policy standard deviation for monitoring."""
+        try:
+            # For RecurrentPPO with continuous actions, log_std is directly on the policy
+            if hasattr(self.model.policy, 'log_std') and hasattr(self.model.policy.log_std, 'data'):
+                current_log_std = self.model.policy.log_std.data.mean().item()
+                return np.exp(current_log_std)
+
+            # Fallback: check action_net
+            if hasattr(self.model.policy, 'action_net') and hasattr(self.model.policy.action_net, 'log_std'):
+                if hasattr(self.model.policy.action_net.log_std, 'data'):
+                    current_log_std = self.model.policy.action_net.log_std.data.mean().item()
+                    return np.exp(current_log_std)
+        except Exception as e:
+            pass
+        return float('nan')
+
     def predict(self, obs):
         action, self.lstm_states = self.model.predict(obs, state=self.lstm_states, episode_start=self.episode_starts, deterministic=True)
         if self.episode_starts: self.episode_starts = False
         return action
 
+    def get_training_stats(self) -> dict:
+        """
+        Get current training statistics similar to standard PPO output.
+        Returns a dictionary with key training metrics.
+        """
+        stats = {}
+
+        if hasattr(self.model, 'logger') and self.model.logger is not None:
+            # Get episode statistics
+            if hasattr(self.model.logger, 'name_to_value'):
+                logger_dict = self.model.logger.name_to_value
+
+                # Rollout statistics
+                stats['ep_len_mean'] = logger_dict.get('rollout/ep_len_mean', 'N/A')
+                stats['ep_rew_mean'] = logger_dict.get('rollout/ep_rew_mean', 'N/A')
+
+                # Time statistics
+                stats['fps'] = logger_dict.get('time/fps', 'N/A')
+                stats['iterations'] = logger_dict.get('time/iterations', 'N/A')
+                stats['time_elapsed'] = logger_dict.get('time/time_elapsed', 'N/A')
+                stats['total_timesteps'] = logger_dict.get('time/total_timesteps', 'N/A')
+
+                # Training statistics
+                stats['approx_kl'] = logger_dict.get('train/approx_kl', 'N/A')
+                stats['clip_fraction'] = logger_dict.get('train/clip_fraction', 'N/A')
+                stats['clip_range'] = logger_dict.get('train/clip_range', 'N/A')
+                stats['entropy_loss'] = logger_dict.get('train/entropy_loss', 'N/A')
+                stats['explained_variance'] = logger_dict.get('train/explained_variance', 'N/A')
+                stats['learning_rate'] = logger_dict.get('train/learning_rate', 'N/A')
+                stats['loss'] = logger_dict.get('train/loss', 'N/A')
+                stats['n_updates'] = logger_dict.get('train/n_updates', 'N/A')
+                stats['policy_gradient_loss'] = logger_dict.get('train/policy_gradient_loss', 'N/A')
+                stats['std'] = logger_dict.get('train/std', 'N/A')
+                stats['value_loss'] = logger_dict.get('train/value_loss', 'N/A')
+
+        # Get current policy std dev manually if not in logger
+        if stats.get('std', 'N/A') == 'N/A':
+            try:
+                if hasattr(self.model.policy, 'log_std') and hasattr(self.model.policy.log_std, 'data'):
+                    current_log_std = self.model.policy.log_std.data.mean().item()
+                    stats['std'] = np.exp(current_log_std)
+            except:
+                stats['std'] = 'N/A'
+
+        return stats
+
+    def print_training_stats(self):
+        """Print training statistics in a formatted table similar to SB3 output."""
+        stats = self.get_training_stats()
+
+        print("-" * 45)
+        print("| rollout/                |             |")
+        print(f"|    ep_len_mean          | {stats['ep_len_mean']:<11} |")
+        print(f"|    ep_rew_mean          | {stats['ep_rew_mean']:<11} |")
+        print("| time/                   |             |")
+        print(f"|    fps                  | {stats['fps']:<11} |")
+        print(f"|    iterations           | {stats['iterations']:<11} |")
+        print(f"|    time_elapsed         | {stats['time_elapsed']:<11} |")
+        print(f"|    total_timesteps      | {stats['total_timesteps']:<11} |")
+        print("| train/                  |             |")
+        print(f"|    approx_kl            | {stats['approx_kl']:<11} |")
+        print(f"|    clip_fraction        | {stats['clip_fraction']:<11} |")
+        print(f"|    clip_range           | {stats['clip_range']:<11} |")
+        print(f"|    entropy_loss         | {stats['entropy_loss']:<11} |")
+        print(f"|    explained_variance   | {stats['explained_variance']:<11} |")
+        print(f"|    learning_rate        | {stats['learning_rate']:<11} |")
+        print(f"|    loss                 | {stats['loss']:<11} |")
+        print(f"|    n_updates            | {stats['n_updates']:<11} |")
+        print(f"|    policy_gradient_loss | {stats['policy_gradient_loss']:<11} |")
+        print(f"|    std                  | {stats['std']:<11} |")
+        print(f"|    value_loss           | {stats['value_loss']:<11} |")
+        print("-" * 45)
+
     def save(self, file_path: str) -> None:
         self.model.save(file_path)
 
-    def learn(self, env, total_timesteps, log_interval: int = 2, verbose=0):
+    def learn(self, env, total_timesteps, log_interval: int = 2, verbose=0, clamp_std: bool = True, clamp_freq: int = 1000):
         self.model.set_env(env)
         self.model.verbose = verbose
-        self.model.learn(total_timesteps=total_timesteps, log_interval=log_interval)
+
+        # Apply initial std dev clamping before training starts
+        if clamp_std:
+            self.clamp_policy_std(min_std=0.1, max_std=1.0)
+            print("✓ Applied initial policy std dev clamping (0.1 - 1.0)")
+
+        # Create callback for periodic std dev clamping
+        callback = None
+        if clamp_std:
+            callback = StdDevClampingCallback(
+                clamp_freq=clamp_freq,
+                min_std=0.1,
+                max_std=1.0,
+                verbose=1 if verbose > 0 else 0
+            )
+            print(f"✓ Periodic std dev clamping enabled (every {clamp_freq} steps)")
+
+        # Enable detailed logging for RecurrentPPO
+        self.model.learn(
+            total_timesteps=total_timesteps,
+            log_interval=log_interval,
+            callback=callback,  # Use the proper callback
+            tb_log_name="RecurrentPPO_run",  # TensorBoard logging name
+            reset_num_timesteps=False  # Continue from existing timesteps if loading checkpoint
+        )
+
+        # Apply final std dev clamping after training
+        if clamp_std:
+            self.clamp_policy_std(min_std=0.1, max_std=1.0)
+            print("✓ Applied final policy std dev clamping")
+
+    def monitor_and_clamp_std(self, clamp: bool = True, min_std: float = 0.1, max_std: float = 1.0) -> None:
+        """
+        Monitor current std dev and optionally clamp it.
+        Useful to call periodically during training.
+        """
+        current_std = self.get_current_std()
+        if not np.isnan(current_std):
+            print(f"Current policy std dev: {current_std:.6f}")
+            if clamp and (current_std < min_std or current_std > max_std):
+                print(f"  -> Clamping to range [{min_std}, {max_std}]")
+                self.clamp_policy_std(min_std, max_std)
+                new_std = self.get_current_std()
+                print(f"  -> New std dev: {new_std:.6f}")
+        else:
+            print("Could not retrieve current policy std dev")
 
 class BasedAgent(Agent):
     '''
@@ -290,176 +446,6 @@ class MLPPolicy(nn.Module):
         x = F.relu(self.fc2(x))
         return self.fc3(x)
 
-class ConstrainedMlpPolicy(nn.Module):
-    """
-    Custom MLP policy with constrained standard deviation to prevent NaN crashes.
-    """
-    def __init__(self, obs_dim: int = 64, action_dim: int = 10, hidden_dim: int = 64):
-        super(ConstrainedMlpPolicy, self).__init__()
-
-        # Shared feature extractor
-        self.shared_net = nn.Sequential(
-            nn.Linear(obs_dim, hidden_dim, dtype=torch.float32),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim, dtype=torch.float32),
-            nn.ReLU()
-        )
-
-        # Policy (action mean) head
-        self.policy_head = nn.Linear(hidden_dim, action_dim, dtype=torch.float32)
-
-        # Value function head
-        self.value_head = nn.Linear(hidden_dim, 1, dtype=torch.float32)
-
-        # Constrained log_std - prevents NaN crashes
-        self.log_std = nn.Parameter(torch.ones(action_dim, dtype=torch.float32) * -2.0)
-
-        # Initialize weights with smaller values
-        self._init_weights()
-
-    def _init_weights(self):
-        """Initialize weights with smaller values for stability."""
-        for module in self.modules():
-            if isinstance(module, nn.Linear):
-                nn.init.orthogonal_(module.weight, gain=0.5)
-                nn.init.constant_(module.bias, 0.0)
-
-    def forward(self, obs):
-        shared_features = self.shared_net(obs)
-
-        # Action mean
-        action_mean = self.policy_head(shared_features)
-
-        # CRITICAL: Clamp log_std to prevent variance explosion
-        log_std_clamped = torch.clamp(self.log_std, min=-4.0, max=-0.5)
-
-        # Value function
-        value = self.value_head(shared_features)
-
-        return action_mean, log_std_clamped, value
-
-class ConstrainedActorCriticPolicy(ActorCriticPolicy):
-    """
-    SB3-compatible Actor-Critic policy with constrained standard deviation.
-    This replaces the built-in MlpPolicy to prevent std explosion.
-    """
-
-    def _build(self, lr_schedule) -> None:
-        """Override build to ensure constrained initialization."""
-        print("DEBUG: ConstrainedActorCriticPolicy._build() called")
-        super()._build(lr_schedule)
-
-        print(f"DEBUG: After super()._build, action_dist: {self.action_dist}")
-        print(f"DEBUG: Action distribution type: {type(self.action_dist)}")
-
-        # Force initialization of action distribution if it's not created yet
-        self._force_action_dist_init()
-
-        # CRITICAL: Replace SB3's action distribution with constrained version
-        self._setup_constrained_distribution()
-        print(f"DEBUG: After _build, action_dist type: {type(self.action_dist)}")
-
-    def _force_action_dist_init(self):
-        """Force initialization of the action distribution."""
-        print("DEBUG: Forcing action distribution initialization...")
-
-        # If action_dist doesn't exist, create it manually
-        if not hasattr(self, 'action_dist') or self.action_dist is None:
-            print("DEBUG: action_dist is None, creating DiagGaussianDistribution...")
-            from stable_baselines3.common.distributions import DiagGaussianDistribution
-
-            # Get action dimension from action space
-            action_dim = self.action_space.shape[0]
-            print(f"DEBUG: Action dimension: {action_dim}")
-
-            # Create the distribution
-            self.action_dist = DiagGaussianDistribution(action_dim)
-            print(f"DEBUG: Created action_dist: {self.action_dist}")
-
-            # Initialize log_std parameter manually
-            if hasattr(self.action_dist, 'log_std'):
-                if self.action_dist.log_std is None:
-                    # Create log_std parameter
-                    import torch.nn as nn
-                    self.action_dist.log_std = nn.Parameter(torch.ones(action_dim, dtype=torch.float32) * -1.5)
-                    print(f"DEBUG: Created log_std parameter: {self.action_dist.log_std.shape}")
-                else:
-                    print(f"DEBUG: log_std already exists: {self.action_dist.log_std.shape}")
-            else:
-                print("DEBUG: action_dist has no log_std attribute")
-        else:
-            print(f"DEBUG: action_dist already exists: {self.action_dist}")
-
-    def _setup_model(self) -> None:
-        """Override setup to add clamping hooks."""
-        print("DEBUG: ConstrainedActorCriticPolicy._setup_model() called")
-        super()._setup_model()
-
-        # Force action dist initialization here too
-        self._force_action_dist_init()
-
-        # Ensure distribution is properly constrained
-        self._setup_constrained_distribution()
-        print(f"DEBUG: After _setup_model, action_dist: {self.action_dist}")
-
-    def _setup_constrained_distribution(self):
-        """Set up the action distribution with proper log_std constraints."""
-        print(f"DEBUG: _setup_constrained_distribution called, action_dist: {self.action_dist}")
-
-        if hasattr(self, 'action_dist') and self.action_dist is not None:
-            if hasattr(self.action_dist, 'log_std') and self.action_dist.log_std is not None:
-                print(f"DEBUG: Found log_std parameter: {self.action_dist.log_std.shape}")
-
-                # FORCE initialization of log_std with constrained values
-                with torch.no_grad():
-                    self.action_dist.log_std.data.fill_(-1.5)  # exp(-1.5) ≈ 0.22
-                    print(f"DEBUG: Initialized log_std to -1.5, actual values: {self.action_dist.log_std.data}")
-
-                # Add a forward hook to clamp log_std EVERY time it's accessed
-                def clamp_log_std_forward_hook(module, input, output):
-                    if hasattr(module, 'log_std') and module.log_std is not None:
-                        with torch.no_grad():
-                            module.log_std.data.clamp_(min=-4.0, max=-0.5)
-                    return output
-
-                # Register forward hook (called during every forward pass)
-                self.action_dist.register_forward_hook(clamp_log_std_forward_hook)
-
-                # Also add backward hook to clamp after gradients
-                def clamp_log_std_backward_hook(grad):
-                    with torch.no_grad():
-                        self.action_dist.log_std.data.clamp_(min=-4.0, max=-0.5)
-                    return grad
-
-                if self.action_dist.log_std.requires_grad:
-                    self.action_dist.log_std.register_hook(clamp_log_std_backward_hook)
-                    print("DEBUG: Registered gradient hook for log_std")
-            else:
-                print("DEBUG: No log_std parameter found or it's None")
-        else:
-            print("DEBUG: No action_dist found")
-
-    def _get_action_dist_from_latent(self, latent_pi):
-        """Override to apply clamping to distribution parameters."""
-        mean_actions = self.action_net(latent_pi)
-
-        # CRITICAL: Force clamp log_std before every distribution creation
-        if hasattr(self.action_dist, 'log_std') and self.action_dist.log_std is not None:
-            with torch.no_grad():
-                self.action_dist.log_std.data.clamp_(min=-4.0, max=-0.5)
-
-        # Use parent class implementation (it will use our clamped log_std)
-        return super()._get_action_dist_from_latent(latent_pi)
-
-    def forward(self, obs, deterministic=False):
-        """Override forward to ensure log_std is always clamped."""
-        # Clamp before any forward pass
-        if hasattr(self.action_dist, 'log_std') and self.action_dist.log_std is not None:
-            with torch.no_grad():
-                self.action_dist.log_std.data.clamp_(min=-4.0, max=-0.5)
-
-        return super().forward(obs, deterministic)
-
 class MLPExtractor(BaseFeaturesExtractor):
     '''
     Class that defines an MLP Base Features Extractor
@@ -482,53 +468,6 @@ class MLPExtractor(BaseFeaturesExtractor):
             features_extractor_kwargs=dict(features_dim=features_dim, hidden_dim=hidden_dim) #NOTE: features_dim = 10 to match action space output
         )
 
-class ConstrainedMLPExtractor(BaseFeaturesExtractor):
-    '''
-    Constrained MLP Base Features Extractor that extracts features properly while using
-    conservative initialization to prevent NaN crashes.
-    '''
-    def __init__(self, observation_space: gym.Space, features_dim: int = 64, hidden_dim: int = 64):
-        super(ConstrainedMLPExtractor, self).__init__(observation_space, features_dim)
-
-        # Create a feature extraction network that outputs the correct features_dim
-        self.shared_net = nn.Sequential(
-            nn.Linear(observation_space.shape[0], hidden_dim, dtype=torch.float32),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim, dtype=torch.float32),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, features_dim, dtype=torch.float32)  # Output features_dim, not action_dim
-        )
-
-        # Use conservative initialization like ConstrainedMlpPolicy
-        self._init_weights()
-
-    def _init_weights(self):
-        """Initialize weights with moderate values for stable learning."""
-        for module in self.modules():
-            if isinstance(module, nn.Linear):
-                # FIXED: Use standard gain for better gradient flow
-                nn.init.orthogonal_(module.weight, gain=1.0)  # Standard gain
-                nn.init.constant_(module.bias, 0.0)
-
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        # Return features of the correct dimension (features_dim)
-        return self.shared_net(obs)
-
-    @classmethod
-    def get_policy_kwargs(cls, features_dim: int = 64, hidden_dim: int = 64) -> dict:
-        return dict(
-            features_extractor_class=cls,
-            features_extractor_kwargs=dict(features_dim=features_dim, hidden_dim=hidden_dim),
-            # Policy architecture settings
-            log_std_init=-1.0,  # Start with moderate std (exp(-1) ≈ 0.37)
-            ortho_init=True,    # Enable orthogonal initialization
-            activation_fn=nn.ReLU,
-            net_arch=dict(pi=[64, 64], vf=[64, 64]),  # SB3 v1.8.0+ format
-            # Optimizer settings
-            optimizer_class=torch.optim.Adam,  # Explicit optimizer
-            optimizer_kwargs=dict(eps=1e-8, weight_decay=0.0)  # Conservative optimizer settings
-        )
-
 class CustomAgent(Agent):
     def __init__(self, sb3_class: Optional[Type[BaseAlgorithm]] = PPO, file_path: str = None, extractor: BaseFeaturesExtractor = None):
         self.sb3_class = sb3_class
@@ -537,35 +476,7 @@ class CustomAgent(Agent):
 
     def _initialize(self) -> None:
         if self.file_path is None:
-            # Simple setup with constrained policy and minimal customization
-            policy_kwargs = self.extractor.get_policy_kwargs() if self.extractor else {}
-
-            print(f"DEBUG: Using policy_kwargs: {policy_kwargs}")
-
-            try:
-                # Use constrained policy with simple settings
-                print("DEBUG: Attempting to create model with ConstrainedActorCriticPolicy...")
-                self.model = self.sb3_class(ConstrainedActorCriticPolicy, self.env,
-                                          policy_kwargs=policy_kwargs,
-                                          verbose=0,
-                                          n_steps=30*90*3,
-                                          batch_size=128,
-                                          ent_coef=0.01)
-                print("DEBUG: ConstrainedActorCriticPolicy created successfully!")
-                print(f"DEBUG: Model policy type: {type(self.model.policy)}")
-
-                # CRITICAL: Force action distribution initialization now
-                self._initialize_action_dist()
-
-            except Exception as e:
-                print(f"Custom policy failed, using MlpPolicy: {e}")
-                # Fallback to standard MlpPolicy
-                self.model = self.sb3_class("MlpPolicy", self.env,
-                                          policy_kwargs=policy_kwargs,
-                                          verbose=0,
-                                          n_steps=30*90*3,
-                                          batch_size=128,
-                                          ent_coef=0.01)
+            self.model = self.sb3_class("MlpPolicy", self.env, policy_kwargs=self.extractor.get_policy_kwargs(), verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01)
             del self.env
         else:
             self.model = self.sb3_class.load(self.file_path)
@@ -587,42 +498,9 @@ class CustomAgent(Agent):
     def learn(self, env, total_timesteps, log_interval: int = 1, verbose=0):
         self.model.set_env(env)
         self.model.verbose = verbose
-
-        # Add a callback to monitor log_std values during training
-        class LogStdMonitorCallback:
-            def __init__(self, model):
-                self.model = model
-                self.step_count = 0
-
-            def __call__(self, locals_, globals_):
-                self.step_count += 1
-
-                # Every 1000 steps, print the actual log_std values
-                if self.step_count % 1000 == 0:
-                    try:
-                        policy = self.model.policy
-                        if (hasattr(policy, 'action_dist') and
-                            policy.action_dist is not None and
-                            hasattr(policy.action_dist, 'log_std') and
-                            policy.action_dist.log_std is not None):
-
-                            log_std_val = policy.action_dist.log_std.data.cpu().numpy()
-                            std_val = np.exp(log_std_val)
-                            print(f"Step {self.step_count}: log_std range [{log_std_val.min():.3f}, {log_std_val.max():.3f}], std range [{std_val.min():.3f}, {std_val.max():.3f}]")
-                        else:
-                            print(f"Step {self.step_count}: action_dist not yet initialized")
-                    except Exception as e:
-                        print(f"Step {self.step_count}: Error accessing log_std: {e}")
-
-                return True
-
-        # Set the callback
-        callback = LogStdMonitorCallback(self.model)
-
         self.model.learn(
             total_timesteps=total_timesteps,
             log_interval=log_interval,
-            callback=callback
         )
 
 # --------------------------------------------------------------------------------
@@ -783,7 +661,7 @@ def death_penalty_reward(
     # Check if player lost a stock this frame
     if player.stocks < player.prev_stock_count:
         player.prev_stock_count = player.stocks
-        return -death_penalty * env.dt
+        return death_penalty * env.dt
 
     # Update stock count for next frame
     player.prev_stock_count = player.stocks
@@ -994,177 +872,6 @@ def simple_survival_reward(env: WarehouseBrawl) -> float:
     """Simple survival reward - just being alive."""
     return 0.01 * env.dt
 
-def button_mashing_penalty(env: WarehouseBrawl) -> float:
-    """
-    Penalizes button mashing behavior to encourage deliberate action selection.
-    Works with the action vector directly for more reliable detection.
-
-    Args:
-        env (WarehouseBrawl): The game environment.
-
-    Returns:
-        float: Negative penalty for button mashing behavior.
-    """
-    player: Player = env.objects["player"]
-    penalty = 0.0
-
-    # Initialize tracking variables if they don't exist
-    if not hasattr(player, 'prev_action_vector'):
-        player.prev_action_vector = None
-        player.action_change_history = []
-        player.high_action_count = 0
-
-    try:
-        # Try to get the current action vector from environment
-        # This approach is more reliable than checking player state
-        current_action_vector = None
-
-        # Check if we can access the last action taken
-        if hasattr(env, 'last_action') and env.last_action is not None:
-            current_action_vector = env.last_action
-        elif hasattr(player, 'last_action') and player.last_action is not None:
-            current_action_vector = player.last_action
-
-        if current_action_vector is not None:
-            # Convert to list/array if needed
-            if hasattr(current_action_vector, 'tolist'):
-                action_list = current_action_vector.tolist()
-            elif hasattr(current_action_vector, '__iter__'):
-                action_list = list(current_action_vector)
-            else:
-                action_list = [current_action_vector]
-
-            # Count active actions (non-zero elements)
-            active_actions = sum(1 for action in action_list if abs(action) > 0.1)
-
-            # PENALTY 1: Too many simultaneous actions
-            if active_actions >= 5:  # 5+ simultaneous actions is excessive
-                penalty += 0.3
-            elif active_actions >= 4:  # 4 simultaneous actions is suspicious
-                penalty += 0.15
-            elif active_actions >= 3:  # 3 simultaneous actions is borderline
-                penalty += 0.05
-
-            # PENALTY 2: Track rapid action changes
-            if player.prev_action_vector is not None:
-                # Calculate action differences
-                action_diff = sum(1 for i, (curr, prev) in enumerate(zip(action_list, player.prev_action_vector))
-                                if abs(curr - prev) > 0.3)
-
-                action_changed = action_diff >= 3  # 3+ buttons changed state
-                player.action_change_history.append(action_changed)
-
-                # Keep only recent history (last 8 frames)
-                if len(player.action_change_history) > 8:
-                    player.action_change_history.pop(0)
-
-                # Penalize rapid changes
-                rapid_changes = sum(player.action_change_history)
-                if rapid_changes >= 5:  # 5+ rapid changes in 8 frames
-                    penalty += 0.2
-                elif rapid_changes >= 3:  # 3+ rapid changes in 8 frames
-                    penalty += 0.1
-
-            # PENALTY 3: Sustained high action count
-            if active_actions >= 3:
-                player.high_action_count += 1
-            else:
-                player.high_action_count = max(0, player.high_action_count - 1)
-
-            # Escalating penalty for sustained mashing
-            if player.high_action_count >= 12:  # 12+ frames of 3+ actions
-                penalty += 0.25
-            elif player.high_action_count >= 6:  # 6+ frames of 3+ actions
-                penalty += 0.1
-
-            # Update tracking
-            player.prev_action_vector = action_list[:]
-        else:
-            # Fallback: check player state (less reliable but better than nothing)
-            action_indicators = [
-                isinstance(player.state, AttackState),
-                hasattr(player, 'velocity') and abs(player.velocity.x) > 0.1,
-                hasattr(player, 'velocity') and player.velocity.y < -0.1,  # Jumping
-            ]
-
-            current_actions = sum(1 for indicator in action_indicators if indicator)
-
-            if current_actions >= 3:
-                penalty += 0.1
-                player.high_action_count = getattr(player, 'high_action_count', 0) + 1
-            else:
-                player.high_action_count = max(0, getattr(player, 'high_action_count', 0) - 1)
-
-    except Exception:
-        # If anything fails, no penalty
-        penalty = 0.0
-
-    # ULTRA-CONSERVATIVE CAP - keep penalty very small to avoid destabilizing training
-    penalty = max(0.0, min(0.1, penalty))
-
-    return -penalty * env.dt  # Return negative penalty
-
-
-def excessive_movement_penalty(env: WarehouseBrawl) -> float:
-    """
-    Penalty for contradictory or excessive movement patterns.
-    Encourages more coherent movement strategies.
-
-    Args:
-        env (WarehouseBrawl): The game environment.
-
-    Returns:
-        float: Negative penalty for contradictory movement.
-    """
-    player: Player = env.objects["player"]
-    penalty = 0.0
-
-    try:
-        # Initialize tracking
-        if not hasattr(player, 'movement_contradiction_count'):
-            player.movement_contradiction_count = 0
-            player.prev_velocity = None
-
-        current_velocity = None
-        if hasattr(player, 'velocity'):
-            current_velocity = (player.velocity.x, player.velocity.y)
-        elif hasattr(player.body, 'velocity'):
-            current_velocity = (player.body.velocity.x, player.body.velocity.y)
-
-        if current_velocity is not None and player.prev_velocity is not None:
-            # Check for rapid direction changes (indicates contradictory inputs)
-            x_direction_change = (current_velocity[0] * player.prev_velocity[0]) < -0.1
-            y_direction_change = (current_velocity[1] * player.prev_velocity[1]) < -0.1
-
-            # Penalty for simultaneous opposite direction changes
-            if x_direction_change and y_direction_change:
-                penalty += 0.05
-                player.movement_contradiction_count += 1
-            elif x_direction_change or y_direction_change:
-                # Smaller penalty for single-axis contradiction
-                penalty += 0.02
-                player.movement_contradiction_count += 1
-            else:
-                # Reduce counter for coherent movement
-                player.movement_contradiction_count = max(0, player.movement_contradiction_count - 1)
-
-            # Escalating penalty for sustained contradictory movement
-            if player.movement_contradiction_count >= 8:
-                penalty += 0.1
-            elif player.movement_contradiction_count >= 4:
-                penalty += 0.03
-
-        # Update tracking
-        if current_velocity is not None:
-            player.prev_velocity = current_velocity
-
-    except Exception:
-        penalty = 0.0
-
-    # ULTRA-CONSERVATIVE CAP
-    penalty = max(0.0, min(0.05, penalty))
-
-    return -penalty * env.dt
 
 def weapon_approach_reward(env: WarehouseBrawl) -> float:
     """
@@ -1269,49 +976,112 @@ def weapon_approach_reward(env: WarehouseBrawl) -> float:
 
     return best_weapon_reward * env.dt
 
+def holding_more_than_3_keys(
+    env: WarehouseBrawl,
+) -> float:
+
+    # Get player object from the environment
+    player: Player = env.objects["player"]
+
+    # Apply penalty if the player is holding more than 3 keys
+    a = player.cur_action
+    if (a > 0.5).sum() > 3:
+        return env.dt
+    return 0
 '''
 Add your dictionary of RewardFunctions here using RewTerms
 '''
 def gen_reward_manager():
-    # PROPORTIONAL REWARD SYSTEM - Attack-prioritized weights
+    # BALANCED REWARD SYSTEM - Optimized for stable training
     reward_functions = {
-        # CORE MOVEMENT & POSITIONING (consistent, every frame)
-        'movement_reward': RewTerm(func=unified_movement_reward, weight=0.1),  # Restored proportional
-        'positioning_reward': RewTerm(func=simple_positioning_reward, weight=0.25),  # Restored proportional
+        # CORE MOVEMENT & POSITIONING (fundamental skills)
+        'movement_reward': RewTerm(func=unified_movement_reward, weight=1.0),  # Base movement toward opponent
+        'positioning_reward': RewTerm(func=simple_positioning_reward, weight=0.8),  # Distance-based positioning
 
-        # CORE COMBAT (primary learning signal) - ATTACK PRIORITY
-        'attack_reward': RewTerm(func=simple_attack_reward, weight=2.0),  # ATTACK PRIORITY - high weight
-        'damage_reward': RewTerm(func=simple_damage_reward, weight=3.0),  # DAMAGE PRIORITY - highest weight
+        # CORE COMBAT (primary learning objectives)
+        'attack_reward': RewTerm(func=simple_attack_reward, weight=2.0),  # Strategic attacking
+        'damage_reward': RewTerm(func=simple_damage_reward, weight=3.0),  # Damage dealing (highest priority)
 
-        # WEAPON COLLECTION (strategic behavior)
-        'weapon_approach_reward': RewTerm(func=weapon_approach_reward, weight=0.5),  # Restored proportional
+        # WEAPON COLLECTION (strategic enhancement)
+        'weapon_approach_reward': RewTerm(func=weapon_approach_reward, weight=0.6),  # Weapon collection
 
-        # ENVIRONMENT CONSTRAINTS (safety boundaries)
-        'boundary_penalty': RewTerm(func=precise_boundary_penalty, weight=1.0),  # Restored proportional
-        'platform_reward': RewTerm(func=precise_platform_reward, weight=0.15),  # Restored proportional
+        # ENVIRONMENT CONSTRAINTS (safety and boundaries)
+        'boundary_penalty': RewTerm(func=precise_boundary_penalty, weight=1.5),  # Strong boundary enforcement
+        'platform_reward': RewTerm(func=precise_platform_reward, weight=0.7),  # Platform usage
 
-        # SURVIVAL (baseline encouragement)
-        'survival_reward': RewTerm(func=simple_survival_reward, weight=0.05),  # Slightly increased
-        'death_penalty': RewTerm(func=death_penalty_reward, weight=2.0),  # Restored proportional
+        # SURVIVAL (fundamental requirement)
+        'death_penalty': RewTerm(func=death_penalty_reward, weight=-2.0),  # Strong death penalty
 
-        # INPUT QUALITY (encourage deliberate actions)
-        'button_mashing_penalty': RewTerm(func=button_mashing_penalty, weight=0.3),  # Restored proportional
-        'movement_contradiction_penalty': RewTerm(func=excessive_movement_penalty, weight=0.1),  # Restored proportional
+        # INPUT QUALITY (action efficiency)
+        'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=-0.3),  # Prevent button mashing
     }
 
     signal_subscriptions = {
-        # MAJOR GAME EVENTS (meaningful rewards for key outcomes)
-        'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=10.0)),  # High priority for wins
-        'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=5.0)),  # High priority for KOs
+        # MAJOR GAME EVENTS (ultimate objectives)
+        'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=100.0)),  # Very high win reward
+        'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=15.0)),  # Strong KO reward
 
-        # TACTICAL EVENTS (moderate weights for skill development)
-        'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=2.5)),  # Restored proportional
+        # TACTICAL EVENTS (skill development)
+        'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=8.0)),  # Combo rewards
 
-        # WEAPON MANAGEMENT (strategic importance)
-        'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=1.0)),  # Restored proportional
-        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=1.0))  # Restored proportional
+        # WEAPON MANAGEMENT (strategic play)
+        'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=5.0)),  # Weapon pickup
+        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=5.0))  # Weapon drop penalty
     }
     return RewardManager(reward_functions, signal_subscriptions)
+
+# -------------------------------------------------------------------------
+# ----------------------------- CALLBACK CLASSES -------------------------
+# -------------------------------------------------------------------------
+
+class StdDevClampingCallback(BaseCallback):
+    """
+    Callback for periodically clamping the policy standard deviation.
+    This is safe for pickling and won't cause serialization issues.
+    """
+    def __init__(self, clamp_freq: int = 1000, min_std: float = 0.1, max_std: float = 1.0, verbose: int = 0):
+        super().__init__(verbose)
+        self.clamp_freq = clamp_freq
+        self.min_std = min_std
+        self.max_std = max_std
+        self.min_log_std = np.log(min_std)
+        self.max_log_std = np.log(max_std)
+
+    def _on_step(self) -> bool:
+        """Called after every step. Returns True to continue training."""
+        if self.n_calls % self.clamp_freq == 0:
+            self._clamp_policy_std()
+        return True
+
+    def _clamp_policy_std(self) -> None:
+        """Clamp the policy standard deviation."""
+        model = self.model
+
+        with torch.no_grad():
+            # For RecurrentPPO with continuous actions, log_std is directly on the policy
+            if hasattr(model.policy, 'log_std') and hasattr(model.policy.log_std, 'data'):
+                old_log_std = model.policy.log_std.data.mean().item()
+                model.policy.log_std.data.clamp_(self.min_log_std, self.max_log_std)
+                new_log_std = model.policy.log_std.data.mean().item()
+
+                if self.verbose > 0:
+                    old_std = np.exp(old_log_std)
+                    new_std = np.exp(new_log_std)
+                    print(f"Step {self.n_calls}: Std dev {old_std:.6f} -> {new_std:.6f}")
+                return
+
+            # Fallback: check action_net if it exists
+            if hasattr(model.policy, 'action_net') and hasattr(model.policy.action_net, 'log_std'):
+                if hasattr(model.policy.action_net.log_std, 'data'):
+                    old_log_std = model.policy.action_net.log_std.data.mean().item()
+                    model.policy.action_net.log_std.data.clamp_(self.min_log_std, self.max_log_std)
+                    new_log_std = model.policy.action_net.log_std.data.mean().item()
+
+                    if self.verbose > 0:
+                        old_std = np.exp(old_log_std)
+                        new_std = np.exp(new_log_std)
+                        print(f"Step {self.n_calls}: Std dev {old_std:.6f} -> {new_std:.6f}")
+                return
 
 # -------------------------------------------------------------------------
 # ----------------------------- MAIN FUNCTION -----------------------------
@@ -1320,9 +1090,8 @@ def gen_reward_manager():
 The main function runs training. You can change configurations such as the Agent type or opponent specifications here.
 '''
 if __name__ == '__main__':
-    # Create agent with constrained policy for stable training
-    # The constrained std prevents NaN crashes, allowing normal hyperparameters
-    my_agent = CustomAgent(sb3_class=PPO, extractor=ConstrainedMLPExtractor)
+    # Create agent
+    # my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
 
     # OPTION 2: Load existing PPO checkpoint (if compatible)
     # my_agent = SB3Agent(sb3_class=PPO, file_path='checkpoints/experiment_11/rl_model_10300103_steps.zip')
@@ -1330,13 +1099,13 @@ if __name__ == '__main__':
     # If you want to use RecurrentPPO instead, start fresh:
     # my_agent = RecurrentPPOAgent()
 
-    # Note: Cannot load regular PPO checkpoints with RecurrentPPO due to LSTM architecture differences
-
+    # Start here if you want to train from a specific timestep. e.g:
+    my_agent = RecurrentPPOAgent(file_path='checkpoints/experiment_19/rl_model_4500045_steps')
 
     # Reward manager
     reward_manager = gen_reward_manager()
     # Self-play settings
-    selfplay_handler = SelfPlayRandom(
+    selfplay_handler = SelfPlayLatest(
         partial(type(my_agent)), # Agent class and its keyword arguments
                                  # type(my_agent) = Agent class
     )
@@ -1347,8 +1116,8 @@ if __name__ == '__main__':
         save_freq=100_000, # Save frequency
         max_saved=40, # Maximum number of saved models
         save_path='checkpoints', # Save path
-        run_name='experiment_16',
-        mode=SaveHandlerMode.FORCE # Save mode, FORCE or RESUME
+        run_name='experiment_19',
+        mode=SaveHandlerMode.RESUME # Save mode, FORCE or RESUME
     )
 
     # Set opponent settings here:
