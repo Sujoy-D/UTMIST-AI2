@@ -455,13 +455,20 @@ class OpponentsCfg():
         # If self-play is selected, return the trained model
         print(f'Selected {agent_name}')
         if agent_name == "self_play":
+            print("Getting self-play opponent...")
             selfplay_handler: SelfPlayHandler = self.opponents[agent_name][1]
-            return selfplay_handler.get_opponent()
+            opponent = selfplay_handler.get_opponent()
+            print("Self-play opponent retrieved.")
+            return opponent
         else:
             # Otherwise, return an instance of the selected agent class
+            print(f"Creating {agent_name} instance...")
             opponent = self.opponents[agent_name][1]()
+            print(f"{agent_name} instance created.")
 
+        print(f"Getting env info for {agent_name}...")
         opponent.get_env_info(self.env)
+        print(f"Env info retrieved for {agent_name}.")
         return opponent
 
 

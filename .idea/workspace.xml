@@ -4,8 +4,52 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="3aa24987-2ad7-446a-9819-a3a3e8ca488e" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/UTMIST_AI2_Env_OFFICIAL.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/UTMIST_AI2_Env_OFFICIAL.ipynb" afterDir="false" />
+    <list default="true" id="3aa24987-2ad7-446a-9819-a3a3e8ca488e" name="Changes" comment="updated models">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/monitor.csv" beforeDir="false" afterPath="$PROJECT_DIR$/checkpoints/experiment_optimized/monitor.csv" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_10000200_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_10050201_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_10100202_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_10150203_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_10200204_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_10250205_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_10300206_steps.zip" beforeDir="false" afterPath="$PROJECT_DIR$/checkpoints/archive/rl_model_10300206_steps.zip" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_10350207_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_8400168_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_8450169_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_8500170_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_8550171_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_8600172_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_8650173_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_8700174_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_8750175_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_8800176_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_8850177_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_8900178_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_8950179_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9000180_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9050181_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9100182_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9150183_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9200184_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9250185_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9300186_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9350187_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9400188_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9450189_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9500190_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9550191_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9600192_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9650193_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9700194_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9750195_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9800196_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9850197_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9900198_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_optimized/rl_model_9950199_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_recurrent/monitor.csv" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/checkpoints/experiment_recurrent/rl_model_100001_steps.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/user/train_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/user/train_agent.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -13,7 +57,27 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="main" />
+      </map>
+    </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;Sujoy-D&quot;
+  }
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/Sujoy-D/UTMIST-AI2.git&quot;,
+    &quot;accountId&quot;: &quot;694e3078-4c3d-4dc0-8800-c614527fca2d&quot;
+  }
+}</component>
+  <component name="HighlightingSettingsPerFile">
+    <setting file="file://$PROJECT_DIR$/user/train_agent.py" root0="FORCE_HIGHLIGHTING" />
   </component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 0
@@ -23,19 +87,82 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;member-A&quot;,
-    &quot;last_opened_file_path&quot;: &quot;C:/Users/moham/Documents/GitHub/UTMIST-AI2-2025&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.pluginManager&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Python tests.Python tests for battle.test_agent_batte.executor": "Run",
+    "Python.agent.executor": "Run",
+    "Python.agent1_wrapper.executor": "Run",
+    "Python.demo_match.executor": "Run",
+    "Python.pvp_match.executor": "Run",
+    "Python.run_battle.executor": "Run",
+    "Python.train_agent.executor": "Run",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "git-widget-placeholder": "reward-attack",
+    "last_opened_file_path": "/Users/sujoydas/UTMIST-AI2/checkpoints/experiment_optimized",
+    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable"
   }
-}</component>
+}]]></component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/checkpoints/experiment_optimized" />
+      <recent name="$PROJECT_DIR$/checkpoints/archive" />
+      <recent name="$PROJECT_DIR$/checkpoints/experiment_aggressive" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/checkpoints/archive" />
+      <recent name="$PROJECT_DIR$/checkpoints/experiment_9" />
+    </key>
+  </component>
+  <component name="RunManager">
+    <configuration name="pvp_match" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="UTMIST-AI2-2025" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/user" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/user/pvp_match.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="Python tests for battle.test_agent_batte" type="tests" factoryName="Autodetect" temporary="true" nameIsGenerated="true">
+      <module name="UTMIST-AI2-2025" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/user" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="_new_additionalArguments" value="&quot;&quot;" />
+      <option name="_new_target" value="&quot;battle.test_agent_batte&quot;" />
+      <option name="_new_targetType" value="&quot;PYTHON&quot;" />
+      <method v="2" />
+    </configuration>
+    <recent_temporary>
+      <list>
+        <item itemvalue="Python tests.Python tests for battle.test_agent_batte" />
+        <item itemvalue="Python.pvp_match" />
+      </list>
+    </recent_temporary>
+  </component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
-        <option value="bundled-python-sdk-495700d161d3-aa17d162503b-com.jetbrains.pycharm.community.sharedIndexes.bundled-PC-243.22562.220" />
+        <option value="bundled-python-sdk-975db3bf15a3-31b6be0877a2-com.jetbrains.pycharm.community.sharedIndexes.bundled-PC-241.18034.82" />
       </set>
     </attachedChunks>
   </component>
@@ -48,6 +175,66 @@
       <option name="presentableId" value="Default" />
       <updated>1753690758554</updated>
     </task>
+    <task id="LOCAL-00001" summary="saving workspace">
+      <option name="closed" value="true" />
+      <created>1761626347541</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1761626347541</updated>
+    </task>
+    <task id="LOCAL-00002" summary="updated models">
+      <option name="closed" value="true" />
+      <created>1761659128975</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1761659128975</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="RECENT_FILTERS">
+      <map>
+        <entry key="Branch">
+          <value>
+            <list>
+              <RecentGroup>
+                <option name="FILTER_VALUES">
+                  <option value="origin/main" />
+                </option>
+              </RecentGroup>
+            </list>
+          </value>
+        </entry>
+      </map>
+    </option>
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State>
+              <option name="FILTERS">
+                <map>
+                  <entry key="branch">
+                    <value>
+                      <list>
+                        <option value="origin/main" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+            </State>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="saving workspace" />
+    <MESSAGE value="updated models" />
+    <option name="LAST_COMMIT_MESSAGE" value="updated models" />
   </component>
 </project>
