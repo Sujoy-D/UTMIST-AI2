@@ -44,8 +44,7 @@ def test_agent_validation():
     username = os.getenv("USERNAME")
     create_participant(username)
     logger.info("Warming up your agent ...")
-    checkpoint_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'checkpoints', 'experiment_19', 'rl_model_7800077_steps')
-    my_agent = SubmittedAgent(file_path=checkpoint_path)
+    my_agent = SubmittedAgent()
     logger.info("Warming up your opponent's agent ...")
     opponent = ConstantAgent()
     match_time = 90
