@@ -44,7 +44,7 @@ def test_agent_validation():
     username = os.getenv("USERNAME")
     create_participant(username)
     logger.info("Warming up your agent ...")
-    my_agent = SubmittedAgent() 
+    my_agent = SubmittedAgent(file_path="/Users/sujoydas/UTMIST-AI2/checkpoints/experiment_19/rl_model_7800077_steps")
     logger.info("Warming up your opponent's agent ...")
     opponent = ConstantAgent()
     match_time = 90
